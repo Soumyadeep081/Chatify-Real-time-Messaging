@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { insforge } from '../lib/insforge';
+import { Mail, Lock, User, AtSign, Eye, EyeOff, ArrowRight, MessageSquare } from 'lucide-react';
 
 // GitHub SVG icon
 const GitHubIcon = () => (
@@ -19,6 +20,55 @@ const GoogleIcon = () => (
     <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
   </svg>
 );
+
+interface InputFieldProps {
+  type: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  icon: React.ReactNode;
+  required?: boolean;
+  hint?: string;
+  isDark: boolean;
+  showToggle?: boolean;
+}
+
+function InputField({ type: baseType, value, onChange, placeholder, icon, required, hint, isDark, showToggle }: InputFieldProps) {
+  const [show, setShow] = useState(false);
+  const type = showToggle ? (show ? 'text' : 'password') : baseType;
+
+  return (
+    <div>
+      <div className="relative group">
+        <div className={`absolute inset-y-0 left-4 flex items-center pointer-events-none transition-colors duration-200 ${isDark ? 'text-white/25 group-focus-within:text-[#e8ff8a]' : 'text-black/25 group-focus-within:text-black/70'}`}>
+          {icon}
+        </div>
+        <input
+          type={type}
+          required={required}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className={`w-full pl-11 pr-${showToggle ? '11' : '4'} py-3.5 rounded-2xl border text-[15px] focus:outline-none transition-all duration-200 font-medium
+            ${isDark
+              ? 'bg-white/5 border-white/8 text-white placeholder:text-white/20 focus:bg-white/8 focus:border-[#e8ff8a]/40 focus:shadow-[0_0_0_3px_rgba(232,255,138,0.08)]'
+              : 'bg-black/3 border-black/8 text-black/90 placeholder:text-black/25 focus:bg-white focus:border-black/25 focus:shadow-[0_0_0_3px_rgba(0,0,0,0.05)] shadow-sm'
+            }`}
+        />
+        {showToggle && (
+          <button
+            type="button"
+            onClick={() => setShow(!show)}
+            className={`absolute inset-y-0 right-3 flex items-center px-1 transition-colors ${isDark ? 'text-white/25 hover:text-white/60' : 'text-black/25 hover:text-black/60'}`}
+          >
+            {show ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
+        )}
+      </div>
+      {hint && <p className={`text-[11px] mt-1.5 ml-1 ${isDark ? 'text-white/30' : 'text-black/35'}`}>{hint}</p>}
+    </div>
+  );
+}
 
 export default function Auth({ onAuthSuccess, isDark, onToggleTheme }: { 
   onAuthSuccess: (session: any) => void, 
@@ -73,10 +123,8 @@ export default function Auth({ onAuthSuccess, isDark, onToggleTheme }: {
           email, 
           password, 
           name,
-          options: {
-            data: { name, username: username.toLowerCase().trim() }
-          }
-        });
+          username: username.toLowerCase().trim(),
+        } as any);
         if (error) throw error;
         if ((data as any)?.session || data?.accessToken) {
           if (rememberMe) {
@@ -101,32 +149,41 @@ export default function Auth({ onAuthSuccess, isDark, onToggleTheme }: {
     setOauthLoading(provider);
     try {
       const redirectTo = window.location.origin + window.location.pathname;
-      const { error } = await insforge.auth.signInWithOAuth({
-        provider,
-        redirectTo,
-      });
+      const { error } = await insforge.auth.signInWithOAuth({ provider, redirectTo });
       if (error) throw error;
-      // Browser will redirect automatically
     } catch (err: any) {
       setError(err.message || `Failed to sign in with ${provider}`);
       setOauthLoading(null);
     }
   };
 
+  const bgBase = isDark ? 'bg-[#060608]' : 'bg-[#f5f5f7]';
+  const cardBg = isDark ? 'bg-[#101014]/80 border-white/8 shadow-[0_32px_80px_rgba(0,0,0,0.6)]' : 'bg-white/80 border-black/6 shadow-[0_32px_80px_rgba(0,0,0,0.08)]';
+
   return (
-    <div className="flex flex-1 w-full items-center justify-center p-4">
-      <div className="w-full max-w-sm p-8 bg-white border border-slate-200 rounded-3xl shadow-xl shadow-slate-200/50">
+    <div className={`flex flex-1 w-full items-center justify-center p-4 min-h-screen ${bgBase} relative overflow-hidden`}>
+      {/* Background ambience */}
+      <div className={`absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[500px] rounded-full blur-[120px] pointer-events-none opacity-60 ${isDark ? 'bg-[#e8ff8a]/10' : 'bg-[#e8ff8a]/30'}`} />
+      <div className={`absolute bottom-0 right-0 w-[400px] h-[400px] rounded-full blur-[100px] pointer-events-none opacity-40 ${isDark ? 'bg-indigo-500/15' : 'bg-indigo-400/20'}`} />
+
+      <div className={`w-full max-w-[400px] rounded-[2.5rem] border backdrop-blur-2xl p-8 relative animate-slide-up ${cardBg}`}>
+        
+        {/* Logo + header */}
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 mb-2">
-            {isLogin ? 'Welcome back' : 'Create an account'}
+          <div className={`w-14 h-14 rounded-2xl mx-auto mb-5 flex items-center justify-center shadow-lg ${isDark ? 'bg-[#e8ff8a] shadow-[#e8ff8a]/20' : 'bg-[#d6ef68] shadow-[#d6ef68]/30'}`}>
+            <MessageSquare size={26} className="text-black" />
+          </div>
+          <h1 className={`text-2xl font-black tracking-tight mb-1.5 ${isDark ? 'text-white' : 'text-black'}`}>
+            {isLogin ? 'Welcome back' : 'Join Chatify'}
           </h1>
-          <p className="text-sm text-slate-500">
-            {isLogin ? 'Enter your details to sign in' : 'Start chatting with friends today'}
+          <p className={`text-[14px] font-medium ${isDark ? 'text-white/40' : 'text-black/45'}`}>
+            {isLogin ? 'Sign in to continue chatting' : 'Create your free account today'}
           </p>
         </div>
 
+        {/* Error */}
         {error && (
-          <div className="mb-6 p-3 rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm text-center font-medium">
+          <div className={`mb-5 px-4 py-3 rounded-2xl text-sm font-semibold text-center border ${isDark ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-red-50 border-red-200 text-red-600'}`}>
             {error}
           </div>
         )}
@@ -138,13 +195,12 @@ export default function Auth({ onAuthSuccess, isDark, onToggleTheme }: {
             id="auth-google-btn"
             onClick={() => handleOAuth('google')}
             disabled={!!oauthLoading || loading}
-            className="w-full flex items-center justify-center gap-3 py-2.5 px-4 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 hover:border-slate-300 transition-all font-semibold text-slate-700 text-sm shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+            className={`w-full flex items-center justify-center gap-3 py-3 px-5 rounded-2xl border font-semibold text-[14px] transition-all hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0
+              ${isDark ? 'bg-white/6 border-white/10 text-white/90 hover:bg-white/10 hover:border-white/20' : 'bg-white border-black/8 text-black/80 hover:border-black/20 shadow-sm hover:shadow-md'}`}
           >
             {oauthLoading === 'google' ? (
-              <span className="w-4 h-4 border-2 border-slate-300 border-t-blue-500 rounded-full animate-spin" />
-            ) : (
-              <GoogleIcon />
-            )}
+              <span className={`w-4 h-4 border-2 rounded-full animate-spin ${isDark ? 'border-white/30 border-t-white' : 'border-black/20 border-t-black/70'}`} />
+            ) : <GoogleIcon />}
             Continue with Google
           </button>
 
@@ -153,112 +209,106 @@ export default function Auth({ onAuthSuccess, isDark, onToggleTheme }: {
             id="auth-github-btn"
             onClick={() => handleOAuth('github')}
             disabled={!!oauthLoading || loading}
-            className="w-full flex items-center justify-center gap-3 py-2.5 px-4 bg-slate-900 border border-slate-800 rounded-xl hover:bg-slate-800 transition-all font-semibold text-white text-sm shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+            className={`w-full flex items-center justify-center gap-3 py-3 px-5 rounded-2xl border font-semibold text-[14px] transition-all hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0
+              ${isDark ? 'bg-white/90 border-transparent text-black hover:bg-white' : 'bg-gray-900 border-transparent text-white hover:bg-black'}`}
           >
             {oauthLoading === 'github' ? (
-              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            ) : (
-              <GitHubIcon />
-            )}
+              <span className={`w-4 h-4 border-2 rounded-full animate-spin ${isDark ? 'border-black/30 border-t-black' : 'border-white/30 border-t-white'}`} />
+            ) : <GitHubIcon />}
             Continue with GitHub
           </button>
         </div>
 
         {/* Divider */}
         <div className="relative mb-6">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-slate-200" />
+          <div className={`absolute inset-0 flex items-center`}>
+            <div className={`w-full border-t ${isDark ? 'border-white/8' : 'border-black/8'}`} />
           </div>
-          <div className="relative flex justify-center text-xs">
-            <span className="bg-white px-3 text-slate-400 font-medium uppercase tracking-widest">or</span>
+          <div className="relative flex justify-center">
+            <span className={`px-3 text-[11px] font-black uppercase tracking-[0.15em] ${isDark ? 'bg-[#101014] text-white/20' : 'bg-white text-black/25'}`}>or</span>
           </div>
         </div>
 
         {/* Email/Password Form */}
-        <form onSubmit={handleSubmit} className="space-y-5">
+        <form onSubmit={handleSubmit} className="space-y-3.5">
           {!isLogin && (
             <>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Name</label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-colors outline-none text-slate-900 placeholder:text-slate-400"
-                  placeholder="John Doe"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Username</label>
-                <input
-                  type="text"
-                  required
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-colors outline-none text-slate-900 placeholder:text-slate-400"
-                  placeholder="username_123"
-                />
-                <p className="text-[10px] text-slate-400 mt-1">Letters, numbers and underscores only</p>
-              </div>
+              <InputField
+                type="text" value={name} onChange={setName}
+                placeholder="Full name" icon={<User size={16} />}
+                required isDark={isDark}
+              />
+              <InputField
+                type="text" value={username}
+                onChange={(v) => setUsername(v.replace(/[^a-zA-Z0-9_]/g, ''))}
+                placeholder="username_123" icon={<AtSign size={16} />}
+                required isDark={isDark} hint="Letters, numbers and underscores only"
+              />
             </>
           )}
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Email</label>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-colors outline-none text-slate-900 placeholder:text-slate-400"
-              placeholder="you@example.com"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Password</label>
-            <input
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-colors outline-none text-slate-900 placeholder:text-slate-400"
-              placeholder="••••••••"
-            />
-          </div>
-          
-          <div className="flex items-center">
-            <input
-              id="remember"
-              type="checkbox"
-              checked={rememberMe}
-              onChange={(e) => setRememberMe(e.target.checked)}
-              className="h-4 w-4 bg-white border-slate-300 rounded focus:ring-blue-500 text-blue-600"
-            />
-            <label htmlFor="remember" className="ml-2 block text-sm font-medium text-slate-600">
+          <InputField
+            type="email" value={email} onChange={setEmail}
+            placeholder="Email address" icon={<Mail size={16} />}
+            required isDark={isDark}
+          />
+          <InputField
+            type="password" value={password} onChange={setPassword}
+            placeholder="Password" icon={<Lock size={16} />}
+            required isDark={isDark} showToggle
+          />
+
+          {/* Remember me */}
+          <div className="flex items-center pt-1">
+            <button
+              type="button"
+              onClick={() => setRememberMe(!rememberMe)}
+              className={`w-5 h-5 rounded-md border flex items-center justify-center transition-all flex-shrink-0 ${rememberMe
+                ? 'bg-[#e8ff8a] border-[#e8ff8a]'
+                : isDark ? 'bg-white/5 border-white/15 hover:border-white/30' : 'bg-white border-black/15 hover:border-black/30'}`}
+            >
+              {rememberMe && <span className="text-black text-[10px] font-black leading-none">✓</span>}
+            </button>
+            <label
+              onClick={() => setRememberMe(!rememberMe)}
+              className={`ml-2.5 text-[13px] font-medium cursor-pointer select-none ${isDark ? 'text-white/50 hover:text-white/80' : 'text-black/50 hover:text-black/80'}`}
+            >
               Remember me
             </label>
           </div>
 
+          {/* Submit */}
           <button
             type="submit"
             id="auth-submit-btn"
             disabled={loading || !!oauthLoading}
-            className="w-full py-3 px-4 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 mt-6 shadow-md hover:shadow-lg"
+            className={`w-full py-3.5 px-6 rounded-2xl font-black text-[15px] flex items-center justify-center gap-2 transition-all hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0 mt-2
+              ${isDark
+                ? 'bg-[#e8ff8a] text-black hover:bg-white shadow-lg shadow-[#e8ff8a]/20 hover:shadow-[#e8ff8a]/30'
+                : 'bg-black text-white hover:bg-gray-900 shadow-lg shadow-black/15 hover:shadow-black/25'
+              }`}
           >
-            {loading ? 'Processing...' : isLogin ? 'Sign In' : 'Sign Up'}
+            {loading ? (
+              <span className={`w-5 h-5 border-2 rounded-full animate-spin border-t-transparent ${isDark ? 'border-black/30 border-t-black' : 'border-white/30 border-t-white'}`} />
+            ) : (
+              <>
+                {isLogin ? 'Sign In' : 'Create Account'}
+                <ArrowRight size={17} className="opacity-70" />
+              </>
+            )}
           </button>
         </form>
 
+        {/* Toggle */}
         <div className="mt-6 text-center">
+          <span className={`text-[13px] ${isDark ? 'text-white/30' : 'text-black/35'}`}>
+            {isLogin ? "Don't have an account?" : 'Already have an account?'}
+          </span>{' '}
           <button
-            onClick={() => {
-              setIsLogin(!isLogin);
-              setError('');
-            }}
+            onClick={() => { setIsLogin(!isLogin); setError(''); }}
             type="button"
-            className="text-sm font-medium text-slate-500 hover:text-blue-600 transition-colors"
+            className={`text-[13px] font-black transition-colors ${isDark ? 'text-[#e8ff8a] hover:text-white' : 'text-black hover:text-gray-600'}`}
           >
-            {isLogin ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
+            {isLogin ? 'Sign up' : 'Sign in'}
           </button>
         </div>
       </div>

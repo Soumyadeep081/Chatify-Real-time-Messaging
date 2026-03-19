@@ -100,8 +100,27 @@ export default function Home() {
         }
       }
 
-      if (activeSession && !forceLanding) {
-        fetchAndSetSession(activeSession);
+      if (activeSession) {
+        if (forceLanding) {
+          // Session exists but user wants landing page (e.g. returning from /privacy)
+          // Hydrate SDK token so they stay logged in, but show landing view
+          if (typeof window !== 'undefined' && (insforge.auth as any).http) {
+            (insforge.auth as any).http.setAuthToken(activeSession.accessToken);
+          }
+          // Fetch profile to populate session.user.profile
+          (async () => {
+            try {
+              const { data: profile } = await insforge.database.from('profiles').select('*').eq('id', activeSession.user.id).single() as any;
+              setSession({ ...activeSession, user: { ...activeSession.user, profile: profile || null } });
+            } catch {
+              setSession(activeSession);
+            }
+            setView('landing');
+            setLoading(false);
+          })();
+        } else {
+          fetchAndSetSession(activeSession);
+        }
       } else {
         const remembered = localStorage.getItem('chatRemember');
         if (remembered && !forceLanding) {
@@ -174,14 +193,21 @@ export default function Home() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center transition-all">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-[#eaff96] flex items-center justify-center animate-pulse shadow-lg shadow-[#eaff96]/20">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="text-black">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="currentColor"/>
-            </svg>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="flex flex-col items-center gap-6">
+          <div className="relative">
+            <div className="absolute inset-0 rounded-3xl bg-accent blur-2xl opacity-40 scale-150 animate-pulse" />
+            <div className="relative w-16 h-16 rounded-3xl bg-accent flex items-center justify-center shadow-2xl shadow-accent/30">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" className="text-black">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="currentColor"/>
+              </svg>
+            </div>
           </div>
-          <div className="w-6 h-6 border-2 border-white/20 border-t-[#eaff96] rounded-full animate-spin" />
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{animationDelay:'0ms'}} />
+            <div className="w-1.5 h-1.5 rounded-full bg-accent/60 animate-bounce" style={{animationDelay:'150ms'}} />
+            <div className="w-1.5 h-1.5 rounded-full bg-accent/30 animate-bounce" style={{animationDelay:'300ms'}} />
+          </div>
         </div>
       </div>
     );

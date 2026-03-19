@@ -1,55 +1,193 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Outfit:wght@400;600;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;0,14..32,800;0,14..32,900;1,14..32,400&family=Outfit:wght@400;500;600;700;800;900&display=swap');
 @import "tailwindcss";
 
+/* =====================================================
+   DESIGN TOKENS
+   ===================================================== */
 :root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
-  --accent: #bada55; /* Refined lime */
+  --background: #f5f5f7;
+  --foreground: #0a0a0f;
+  --accent: #b8d400;
+  --accent-hover: #a0c000;
   --card: #ffffff;
-  --border: rgba(15, 23, 42, 0.08);
+  --card-hover: #f9f9fb;
+  --border: rgba(10, 10, 15, 0.07);
+  --border-strong: rgba(10, 10, 15, 0.15);
+  --muted: rgba(10, 10, 15, 0.45);
+  --radius-sm: 12px;
+  --radius-md: 20px;
+  --radius-lg: 28px;
+  --radius-xl: 36px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+  --shadow-md: 0 4px 16px rgba(0,0,0,.08), 0 1px 4px rgba(0,0,0,.04);
+  --shadow-lg: 0 12px 40px rgba(0,0,0,.10), 0 4px 12px rgba(0,0,0,.05);
 }
 
 [data-theme='dark'] {
-  --background: #050505;
-  --foreground: #f8fafc;
-  --accent: #eaff96;
-  --card: #141414;
-  --border: rgba(255, 255, 255, 0.05);
+  --background: #060608;
+  --foreground: #f0f0f4;
+  --accent: #e8ff8a;
+  --accent-hover: #d6ef78;
+  --card: #101014;
+  --card-hover: #18181e;
+  --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --muted: rgba(240, 240, 244, 0.38);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.4), 0 1px 2px rgba(0,0,0,.3);
+  --shadow-md: 0 4px 20px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.3);
+  --shadow-lg: 0 20px 60px rgba(0,0,0,.6), 0 6px 20px rgba(0,0,0,.4);
 }
 
+/* =====================================================
+   TAILWIND THEME BRIDGE
+   ===================================================== */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-accent: var(--accent);
   --color-card: var(--card);
   --color-border: var(--border);
-  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
   --font-display: 'Outfit', sans-serif;
+}
+
+/* =====================================================
+   BASE
+   ===================================================== */
+html {
+  scroll-behavior: smooth;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'kern' 1, 'liga' 1, 'calt' 1;
 }
 
 * {
   border-color: var(--border);
+  box-sizing: border-box;
 }
 
+/* =====================================================
+   SCROLLBAR STYLING
+   ===================================================== */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+/* =====================================================
+   SELECTION
+   ===================================================== */
 ::selection {
   background: var(--accent);
   color: #000;
 }
 
+/* =====================================================
+   UTILITY CLASSES
+   ===================================================== */
 .glass {
-  background: rgba(var(--background-rgb), 0.7);
-  backdrop-filter: blur(20px);
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--border);
+}
+
+[data-theme='dark'] .glass {
+  background: rgba(16, 16, 20, 0.75);
+}
+
+.glow-accent {
+  box-shadow: 0 0 40px rgba(232, 255, 138, 0.25), 0 0 80px rgba(232, 255, 138, 0.08);
+}
+
+.glow-accent-sm {
+  box-shadow: 0 0 20px rgba(232, 255, 138, 0.2);
 }
 
 .premium-gradient {
-  background: radial-gradient(circle at top right, var(--accent), transparent),
-              radial-gradient(circle at bottom left, #000, transparent);
+  background: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(232,255,138,0.18), transparent),
+              radial-gradient(ellipse 60% 40% at 80% 80%, rgba(99,102,241,0.1), transparent);
 }
+
+/* =====================================================
+   ANIMATIONS
+   ===================================================== */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.animate-float { animation: float 4s ease-in-out infinite; }
+.animate-glow-pulse { animation: glow-pulse 2s ease-in-out infinite; }
+.animate-slide-up { animation: slide-up 0.5s cubic-bezier(0.16,1,0.3,1) forwards; }
+.animate-fade-in { animation: fade-in 0.4s ease forwards; }
+
+/* Chat scroll animation */
+@keyframes chat-scroll {
+  0%, 15%  { transform: translateY(0); }
+  25%, 35% { transform: translateY(-70px); }
+  45%, 55% { transform: translateY(-160px); }
+  65%, 75% { transform: translateY(-290px); }
+  85%, 100% { transform: translateY(-380px); }
+}
+.animate-chat { animation: chat-scroll 24s ease-in-out infinite alternate; }
+
+/* =====================================================
+   FORM INPUTS — GLOBAL PREMIUM STYLE
+   ===================================================== */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+textarea {
+  transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
+}
+
+/* =====================================================
+   BUTTON TRANSITIONS
+   ===================================================== */
+button {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* =====================================================
+   SAFE AREA (mobile)
+   ===================================================== */
+.pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+.pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
