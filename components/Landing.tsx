@@ -1,6 +1,6 @@
 'use client';
 
-import { MessageSquare, Zap, Shield, Users, ArrowRight, CheckCircle2, Star, Globe, Smartphone, Lock, Gamepad2, Flame, Sun, Moon, User, LogOut } from 'lucide-react';
+import { MessageSquare, Zap, Shield, Users, ArrowRight, CheckCircle2, Star, Globe, Smartphone, Lock, Gamepad2, Flame, Sun, Moon, User, LogOut, Video } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import ProfilePanel from './ProfilePanel';
 import ZoomedImageModal from './ZoomedImageModal';
@@ -98,41 +98,48 @@ export default function Landing({ session, onGetStarted, onGoToTrending, onSignO
       </nav>
 
       {/* 2. Hero Section */}
-      <main className="flex-1 flex flex-col items-center text-center px-4 pt-24 pb-20 relative overflow-hidden bg-background">
-        <div className={`absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-5xl h-[500px] bg-gradient-to-b ${isDark ? 'from-accent/10' : 'from-accent/30'} to-transparent -z-10 rounded-full blur-[100px] opacity-60`}></div>
+      <main className="flex-1 flex flex-col items-center text-center px-4 pt-32 pb-24 relative overflow-hidden bg-background">
+        {/* Glow Effects */}
+        <div className={`absolute top-[-10%] left-1/2 -translate-x-1/2 w-full max-w-6xl h-[600px] bg-gradient-to-b ${isDark ? 'from-[#eaff96]/20' : 'from-[#eaff96]/40'} to-transparent -z-10 rounded-full blur-[120px] opacity-80 animate-pulse`}></div>
+        <div className={`absolute top-[20%] right-[-10%] w-[500px] h-[500px] bg-gradient-to-bl ${isDark ? 'from-indigo-500/20' : 'from-indigo-400/30'} to-transparent -z-10 rounded-full blur-[100px] opacity-60`}></div>
 
-        <div className={`transition-all duration-1000 transform ${isVisible ? 'translate-y-0 opacity-100' : 'translate-y-10 opacity-0'} w-full max-w-5xl`}>
-
-          {/* Signed-in hero card (Removed per request) */}
-
-          <h1 className="text-6xl md:text-8xl font-black tracking-tighter mb-6 leading-[1.05] max-w-5xl text-foreground">
+        <div className={`transition-all duration-1000 transform ${isVisible ? 'translate-y-0 opacity-100' : 'translate-y-12 opacity-0'} w-full max-w-5xl relative z-10`}>
+          
+          <h1 className="text-6xl md:text-8xl lg:text-[7rem] font-black tracking-tighter mb-8 leading-[1.05] max-w-5xl text-foreground">
             {session ? (
-              <>Welcome back, <br /><span className={`text-transparent bg-clip-text bg-gradient-to-r ${isDark ? 'from-accent to-[#fff]' : 'from-accent to-foreground'}`}>{profileName}.</span></>
+              <>Welcome back, <br /><span className={`text-transparent bg-clip-text bg-gradient-to-r ${isDark ? 'from-accent to-white' : 'from-accent to-black'}`}>{profileName}.</span></>
             ) : (
-              <>Connect with anyone, <br /><span className={`text-transparent bg-clip-text bg-gradient-to-r ${isDark ? 'from-accent to-[#fff]' : 'from-accent to-foreground'}`}>in absolutely real-time.</span></>
+              <>Connect instantly, <br /><span className={`text-transparent bg-clip-text bg-gradient-to-r ${isDark ? 'from-accent via-yellow-200 to-white' : 'from-accent via-yellow-600 to-black'}`}>without boundaries.</span></>
             )}
           </h1>
           
-          <p className="text-lg md:text-xl text-foreground/50 max-w-2xl mx-auto mb-10 leading-relaxed font-medium">
-            Ultra-fast messaging. Immersive trending feeds. Integrated Arcade games. All synced directly via edge-network websockets.
+          <p className="text-lg md:text-2xl text-foreground/60 max-w-3xl mx-auto mb-12 leading-relaxed font-medium">
+            Ultra-fast messaging, encrypted native <strong className="text-foreground">WebRTC calls</strong>, integrated <strong>Arcade Games</strong>, and global trending feeds—synced perfectly over edge-network websockets.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center space-y-4 sm:space-y-0 sm:space-x-4">
             <button
               onClick={onGetStarted}
-              className={`group relative inline-flex items-center justify-center px-8 py-4 font-bold text-black transition-all rounded-full hover:scale-105 shadow-xl w-full sm:w-auto ${isDark ? 'bg-accent hover:bg-white shadow-accent/30' : 'bg-accent hover:bg-accent/80'}`}
+              className={`group relative inline-flex items-center justify-center px-10 py-5 font-black text-black transition-all rounded-full hover:scale-105 shadow-[0_0_40px_rgba(234,255,150,0.4)] w-full sm:w-auto text-lg ${isDark ? 'bg-[#eaff96] hover:bg-white' : 'bg-[#eaff96] hover:bg-[#d4e687]'}`}
             >
+              <div className="absolute inset-0 rounded-full bg-white opacity-0 group-hover:opacity-20 transition-opacity" />
               {session ? 'Go to your Messages' : 'Start Chatting Now'}
-              <ArrowRight className="w-5 h-5 ml-2 transition-transform duration-300 group-hover:translate-x-1" />
+              <ArrowRight className="w-5 h-5 ml-3 transition-transform duration-300 group-hover:translate-x-1" />
             </button>
             <button
               onClick={onGoToTrending}
-              className="inline-flex items-center justify-center px-8 py-4 font-bold text-foreground bg-foreground/5 border border-foreground/10 transition-all rounded-full hover:bg-foreground/10 w-full sm:w-auto overflow-hidden group"
+              className="inline-flex items-center justify-center px-10 py-5 font-bold text-foreground bg-foreground/5 border border-foreground/10 transition-all rounded-full hover:bg-foreground/10 hover:border-foreground/20 w-full sm:w-auto overflow-hidden group text-lg backdrop-blur-md"
             >
-              <Flame size={18} className="mr-2 text-orange-500 group-hover:animate-pulse" />
+              <Flame size={20} className="mr-3 text-orange-500 group-hover:animate-bounce" />
               Explore Trending Live
             </button>
-
+          </div>
+          
+          {/* Trust badges */}
+          <div className="mt-16 pt-8 border-t border-foreground/5 flex flex-wrap items-center justify-center gap-8 text-foreground/40 font-bold uppercase tracking-widest text-xs">
+             <div className="flex items-center gap-2"><Globe size={16} /> Edge Network</div>
+             <div className="flex items-center gap-2"><Lock size={16} /> E2E Encrypted</div>
+             <div className="flex items-center gap-2"><Zap size={16} /> 50ms Latency</div>
           </div>
         </div>
       </main>
@@ -259,27 +266,28 @@ export default function Landing({ session, onGetStarted, onGoToTrending, onSignO
       </section>
 
       {/* 4. Features Grid */}
-      <section id="features" className="px-6 py-24 bg-background border-t border-border">
-        <div className="max-w-7xl mx-auto">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-5xl font-black text-foreground mb-4 tracking-tight">Everything you need</h2>
-            <p className="text-foreground/50 max-w-2xl mx-auto text-lg">A truly native messaging experience powered by edge networks.</p>
+      <section id="features" className="px-6 py-32 bg-background border-t border-border relative">
+        <div className={`absolute top-1/2 left-1/4 w-[600px] h-[600px] ${isDark ? 'bg-indigo-500/5' : 'bg-indigo-500/10'} rounded-full blur-[120px] -translate-y-1/2 pointer-events-none`}></div>
+        <div className="max-w-7xl mx-auto relative z-10">
+          <div className="text-center mb-20">
+            <h2 className="text-4xl md:text-6xl font-black text-foreground mb-6 tracking-tight">Everything you need</h2>
+            <p className="text-foreground/50 max-w-2xl mx-auto text-xl">A truly native messaging experience powered by edge networks.</p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {[
-              { icon: <Zap className="text-accent" size={26} />, title: "Instant Delivery", desc: "Powered by deep web-socket integration, delivering payloads in sub-milliseconds." },
-              { icon: <Shield className="text-accent" size={26} />, title: "End-to-End Secure", desc: "Strict Row-Level Security policies ensure your direct messages are yours and yours alone." },
-              { icon: <Users className="text-accent" size={26} />, title: "Global Presence", desc: "See who's online immediately. Our presence engine tracks active users globally." },
-              { icon: <Lock className="text-accent" size={26} />, title: "Persistent Auth", desc: "Enjoy simple 'Remember Me' flows that seamlessly logs you in without typing a password." },
-              { icon: <MessageSquare className="text-accent" size={26} />, title: "Minimalist Interface", desc: "Clutter-free, distraction-free chatting. An aesthetic designed purely for your words." },
-              { icon: <Gamepad2 className="text-accent" size={26} />, title: "Arcade Games", desc: "Challenge your friends to real-time multiplayer games right inside the chat window." }
+              { icon: <Zap className="text-black" size={24} />, title: "Instant Delivery", desc: "Powered by deep web-socket integration, delivering payloads in sub-milliseconds." },
+              { icon: <Shield className="text-black" size={24} />, title: "End-to-End Secure", desc: "Strict Row-Level Security policies ensure your direct messages are yours and yours alone." },
+              { icon: <Users className="text-black" size={24} />, title: "Global Presence", desc: "See who's online immediately. Our presence engine tracks active users globally." },
+              { icon: <Lock className="text-black" size={24} />, title: "Persistent Auth", desc: "Enjoy simple 'Remember Me' flows that seamlessly logs you in without typing a password." },
+              { icon: <Video className="text-black" size={24} />, title: "Native Video Calling", desc: "Crystal clear, low-latency P2P WebRTC calls with a premium WhatsApp-like interface." },
+              { icon: <Gamepad2 className="text-black" size={24} />, title: "Arcade Games", desc: "Challenge your friends to real-time multiplayer games right inside the chat window." }
             ].map((feature, i) => (
-              <div key={i} className="p-8 rounded-[2rem] border border-border bg-card hover:bg-accent/5 hover:border-accent/20 transition-all duration-300 hover:-translate-y-1 group">
-                <div className="w-14 h-14 rounded-2xl bg-foreground/5 flex items-center justify-center mb-6 border border-border group-hover:scale-110 transition-transform duration-300">
+              <div key={i} className={`p-8 rounded-[2.5rem] border backdrop-blur-md transition-all duration-500 hover:-translate-y-2 group ${isDark ? 'bg-white/5 border-white/10 hover:bg-white/10 hover:border-accent/30 hover:shadow-[0_0_40px_rgba(234,255,150,0.1)]' : 'bg-gray-50/80 border-black/5 hover:bg-white hover:border-accent/40 hover:shadow-xl'}`}>
+                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-6 shadow-lg group-hover:scale-110 transition-transform duration-300 ${isDark ? 'bg-[#eaff96]' : 'bg-[#d6ed68]'}`}>
                   {feature.icon}
                 </div>
-                <h3 className="text-xl font-bold mb-3 text-foreground">{feature.title}</h3>
-                <p className="text-foreground/50 leading-relaxed text-sm">{feature.desc}</p>
+                <h3 className="text-2xl font-bold mb-3 text-foreground">{feature.title}</h3>
+                <p className="text-foreground/60 leading-relaxed text-[15px]">{feature.desc}</p>
               </div>
             ))}
           </div>

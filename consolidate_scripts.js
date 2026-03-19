@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const root = 'c:\\Users\\91620\\chatapp';
+const root = process.cwd();
 
 const groups = {
   'fetch_js.js': [/fetch.*\.js$/],

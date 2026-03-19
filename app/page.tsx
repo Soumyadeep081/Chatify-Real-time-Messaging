@@ -39,6 +39,14 @@ export default function Home() {
         setLoading(false);
         return;
       }
+      
+      // CRITICAL: Hydrate the SDK with the restored token!
+      if (typeof window !== 'undefined' && (insforge.auth as any).saveSessionFromResponse) {
+         (insforge.auth as any).saveSessionFromResponse(authSession);
+      } else if (typeof window !== 'undefined' && (insforge.auth as any).http) {
+         (insforge.auth as any).http.setAuthToken(authSession.accessToken);
+      }
+
       try {
         const { data: profile } = await insforge.database
           .from('profiles')
@@ -66,9 +74,25 @@ export default function Home() {
       // Check if user specifically requested landing page via URL param
       const url = new URL(window.location.href);
       const forceLanding = url.searchParams.get('view') === 'landing';
+      let activeSession = data.session;
 
-      if (data.session && !forceLanding) {
-        fetchAndSetSession(data.session);
+      // WORKAROUND: The Insforge SDK sets memory mode on OAuth logins, which
+      // drops the token on reload. We manually back it up to localStorage.
+      if (activeSession) {
+        localStorage.setItem('insforge_oauth_backup', JSON.stringify(activeSession));
+      } else {
+        const backup = localStorage.getItem('insforge_oauth_backup');
+        if (backup) {
+          try {
+            activeSession = JSON.parse(backup);
+          } catch (e) {
+            localStorage.removeItem('insforge_oauth_backup');
+          }
+        }
+      }
+
+      if (activeSession && !forceLanding) {
+        fetchAndSetSession(activeSession);
       } else {
         const remembered = localStorage.getItem('chatRemember');
         if (remembered && !forceLanding) {
@@ -76,7 +100,9 @@ export default function Home() {
             const { email, password } = JSON.parse(remembered);
             insforge.auth.signInWithPassword({ email, password }).then((res) => {
               if ((res.data as any)?.session || res.data?.accessToken) {
-                fetchAndSetSession(res.data);
+                const newSession = (res.data as any)?.session || res.data;
+                localStorage.setItem('insforge_oauth_backup', JSON.stringify(newSession));
+                fetchAndSetSession(newSession);
               } else {
                 setView('landing');
                 setLoading(false);
@@ -90,13 +116,16 @@ export default function Home() {
           // Check if we're returning from OAuth (URL may have auth params)
           const hasOAuthParams = url.searchParams.has('access_token') || 
                                   url.searchParams.has('code') || 
-                                  url.hash.includes('access_token');
+                                  url.hash.includes('access_token') ||
+                                  url.searchParams.has('insforge_code');
           if (hasOAuthParams && !forceLanding) {
             // Give SDK a moment to process the callback params
             setTimeout(() => {
               insforge.auth.getCurrentSession().then(({ data: retryData }) => {
-                if (retryData.session) {
-                  fetchAndSetSession(retryData.session);
+                let retrySession = retryData.session;
+                if (retrySession) {
+                  localStorage.setItem('insforge_oauth_backup', JSON.stringify(retrySession));
+                  fetchAndSetSession(retrySession);
                 } else {
                   setView('landing');
                   setLoading(false);
@@ -113,6 +142,7 @@ export default function Home() {
   }, []);
 
   const handleSignOut = () => {
+    localStorage.removeItem('insforge_oauth_backup');
     setSession(null);
     setView('landing');
   };

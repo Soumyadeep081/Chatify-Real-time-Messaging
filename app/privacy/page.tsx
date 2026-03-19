@@ -2,7 +2,7 @@ export default function PrivacyPage() {
   return (
     <div className="min-h-screen bg-[#050505] text-[#ececec] p-12 font-sans selection:bg-[#eaff96]/30">
       <div className="max-w-3xl mx-auto space-y-6">
-        <a href="/?view=landing" className="text-[#eaff96] hover:underline mb-8 inline-block font-semibold">← Back to Home</a>
+        <a href="/" className="text-[#eaff96] hover:underline mb-8 inline-block font-semibold">← Back to Home</a>
         
         <h1 className="text-4xl md:text-5xl font-black mb-8 text-white">Privacy Policy</h1>
         

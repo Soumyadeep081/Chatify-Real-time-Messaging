@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { insforge } from '../lib/insforge';
 import { X, Trophy, Clock, Users, Crown } from 'lucide-react';
 
@@ -23,197 +23,378 @@ interface GameOverlayProps {
   currentUser: any;
   targetType: 'user' | 'group' | null;
   targetData: any;
-  isInviter: boolean; // true = invited (goes first), false = accepter (goes second)
+  isInviter: boolean;
   onClose: () => void;
 }
 
-export default function GameOverlay({ gameType, roomId, currentUser, targetType, targetData, isInviter, onClose }: GameOverlayProps) {
-  const [players, setPlayers] = useState<Record<string, any>>({});
+// ── helper: stable delay ──────────────────────────────────────────────
+const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+export default function GameOverlay({
+  gameType, roomId, currentUser, targetType, targetData, isInviter, onClose
+}: GameOverlayProps) {
+
+  // ── state ──────────────────────────────────────────────────────────
+  const [players, setPlayers]     = useState<Record<string, any>>({});
   const [gameState, setGameState] = useState<any>({ status: 'waiting', logs: [] });
-  const [hasWon, setHasWon] = useState(false);
+  const [hasWon, setHasWon]       = useState(false);
   const [localInput, setLocalInput] = useState('');
   const [reactionTimer, setReactionTimer] = useState<any>(null);
-  const mountedRef = useRef(true);
-  const gameStateRef = useRef(gameState);
-  const playersRef = useRef(players);
+  const [phase, setPhase]         = useState<'connecting' | 'lobby' | 'playing'>('connecting');
+  const [error, setError]         = useState<string | null>(null);
 
+  // ── stable refs (avoid stale closures in callbacks) ────────────────
+  const mountedRef      = useRef(true);
+  const playersRef      = useRef<Record<string, any>>({});
+  const gameStateRef    = useRef<any>({ status: 'waiting', logs: [] });
+  const channelRef      = useRef(`game_room:${roomId}`);
+  const acknowledgedRef = useRef<Set<string>>(new Set()); // players we've replied to already
+
+  // ── game constants ─────────────────────────────────────────────────
   const MATH_QUESTIONS = [
     { q: '12 + 15 = ?', a: '27' }, { q: '8 × 7 = ?', a: '56' },
     { q: '144 / 12 = ?', a: '12' }, { q: '30 - 18 = ?', a: '12' },
-    { q: '9 × 9 = ?', a: '81' }, { q: '64 / 8 = ?', a: '8' }
+    { q: '9 × 9 = ?', a: '81' },   { q: '64 / 8 = ?', a: '8' }
   ];
   const SCRAMBLED = [
     { q: 'nitoacre', a: 'reaction' }, { q: 'rowlked', a: 'workload' },
     { q: 'tac', a: 'cat' }, { q: 'enigs', a: 'reigns' }, { q: 'lbeta', a: 'table' }
   ];
   const TRIVIA = [
-    { q: 'Capital of France?', opts: ['Lyon', 'Paris', 'Marseille'], a: 'Paris' },
-    { q: 'What is 2+2?', opts: ['3', '4', '5'], a: '4' },
-    { q: 'Largest planet?', opts: ['Saturn', 'Jupiter', 'Neptune'], a: 'Jupiter' },
-    { q: 'H₂O is?', opts: ['Hydrogen gas', 'Water', 'Helium'], a: 'Water' }
+    { q: 'Capital of France?',  opts: ['Lyon', 'Paris', 'Marseille'],       a: 'Paris'   },
+    { q: 'What is 2+2?',        opts: ['3', '4', '5'],                       a: '4'       },
+    { q: 'Largest planet?',     opts: ['Saturn', 'Jupiter', 'Neptune'],      a: 'Jupiter' },
+    { q: 'H₂O is?',            opts: ['Hydrogen gas', 'Water', 'Helium'],   a: 'Water'   }
   ];
 
+  // ── derived player info ────────────────────────────────────────────
+  const myName: string = (
+    currentUser.profile?.name ||
+    currentUser.name ||
+    currentUser.profile?.username ||
+    currentUser.username ||
+    'Player'
+  ).toString();
+
+  // ══════════════════════════════════════════════════════════════════
+  // ── PRESENCE: update this player in DB and read room members ──────
+  // ══════════════════════════════════════════════════════════════════
+
+  const upsertSelfInDB = useCallback(async () => {
+    try {
+      await insforge.database.rpc('upsert_game_player', {
+        p_room_id: roomId,
+        p_user_id: currentUser.id,
+        p_player_name: myName,
+        p_is_host: isInviter
+      });
+    } catch (e) {
+      // non-fatal
+    }
+  }, [roomId, currentUser.id, myName, isInviter]);
+
+  const refreshPlayersFromDB = useCallback(async () => {
+    if (!mountedRef.current) return;
+    // Once game is playing, don't refresh players from DB — the player list is frozen
+    // and we don't want stale last_seen evictions to remove players mid-game.
+    if (gameStateRef.current.status === 'playing' || gameStateRef.current.status === 'finished') return;
+    try {
+      // In lobby: 15s cutoff. Before that, use a very generous window.
+      const cutoff = new Date(Date.now() - 15_000).toISOString();
+      const { data } = await insforge.database
+        .from('game_session_players')
+        .select('*')
+        .eq('room_id', roomId)
+        .gte('last_seen', cutoff);
+
+      if (!mountedRef.current || !data) return;
+
+      const next: Record<string, any> = {};
+      data.forEach((row: any) => {
+        next[row.user_id] = {
+          id: row.user_id,
+          name: row.player_name,
+          isInviter: row.is_host,
+          lastSeen: new Date(row.last_seen).getTime()
+        };
+      });
+
+      playersRef.current = next;
+      setPlayers(next);
+    } catch (e) {
+      // non-fatal
+    }
+  }, [roomId]);
+
+  // Polls the DB for game state — fallback for missed state_update pub/sub events
+  // BOTH players poll: host can't receive guest moves if pub/sub fails (and vice versa)
+  const pollGameStateFromDB = useCallback(async () => {
+    if (!mountedRef.current) return;
+    try {
+      const { data } = await insforge.database
+        .from('game_sessions')
+        .select('status, game_state_json, last_writer_id')
+        .eq('id', roomId)
+        .maybeSingle();
+
+      if (!mountedRef.current || !data || !data.game_state_json) return;
+
+      // CRITICAL: only apply if the OTHER player wrote this state.
+      // If we wrote it ourselves, we already have it in gameStateRef — skip.
+      if (data.last_writer_id === currentUser.id) return;
+
+      const dbStatus    = data.status;
+      const localStatus = gameStateRef.current.status;
+
+      // Apply only if DB is "ahead" (never regress to waiting)
+      const shouldApply =
+        (localStatus === 'waiting' && (dbStatus === 'playing' || dbStatus === 'finished')) ||
+        (localStatus === 'playing') ||
+        (localStatus === 'finished' && dbStatus === 'finished');
+
+      if (!shouldApply) return;
+
+      try {
+        const dbState = JSON.parse(data.game_state_json);
+        if (!dbState || dbState.status === 'waiting') return; // never regress
+        gameStateRef.current = dbState;
+        setGameState(dbState);
+        if (dbState.status === 'finished' && dbState.winnerId === currentUser.id) {
+          handleWin(dbState.winnerId);
+        }
+      } catch (_) { /* invalid JSON — ignore */ }
+    } catch (e) {
+      // non-fatal
+    }
+  }, [roomId, currentUser.id]);
+
+
+  // ══════════════════════════════════════════════════════════════════
+  // ── MAIN INIT EFFECT ──────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
+    const channel = channelRef.current;
+    let heartbeatInterval: ReturnType<typeof setInterval>;
+    let dbRefreshInterval: ReturnType<typeof setInterval>;
+    let cleanupHandlers: (() => void) | null = null;
 
-  useEffect(() => {
-    const channel = `game_room:${roomId}`;
-
-    const initGame = async () => {
+    const init = async () => {
       try {
+        // 1. Ensure realtime is connected
         await insforge.realtime.connect();
-        
-        // Wait up to 2 seconds for a stable connection
-        let retries = 0;
-        while (!(insforge.realtime as any).isConnected?.() && retries < 10) {
-          await new Promise(r => setTimeout(r, 200));
-          retries++;
+        await delay(300);
+
+        // 2. If host: create the game session record first
+        if (isInviter) {
+          try {
+            await insforge.database.rpc('upsert_game_session', {
+              p_room_id: roomId,
+              p_game_type: gameType,
+              p_host_id: currentUser.id
+            });
+          } catch (_) { /* non-fatal */ }
         }
 
-        const res = await insforge.realtime.subscribe(channel);
-        if (!res.ok) {
-          console.warn(`[GameRoom] Subscription note for ${channel}:`, res.error || 'Transient issue or rejoin');
-        }
+        // 3. Register self in DB (source of truth)
+        await upsertSelfInDB();
 
-        const myName: string = (currentUser.profile?.name || currentUser.name || currentUser.profile?.username || currentUser.username || 'Player').toString();
+        // 4. Subscribe to channel
+        await insforge.realtime.subscribe(channel);
+        await delay(200);
 
-      const updatePlayers = (updater: (prev: Record<string, any>) => Record<string, any>) => {
-        setPlayers(prev => {
-          const next = updater(prev);
-          playersRef.current = next;
-          return next;
-        });
-      };
-
-      // Store handlers to remove them later
-      const handlers: Record<string, (payload: any) => void> = {};
-
-      handlers.player_joined = (payload: any) => {
         if (!mountedRef.current) return;
-        if (payload.room !== roomId) return;
 
-        updatePlayers(prev => {
-          const next = { ...prev, [payload.id]: payload };
-          
-          // Reply with my info and current state so the new player is up to date
-          insforge.realtime.publish(channel, 'player_ack', {
+        // ── Event handlers ────────────────────────────────────────────
+
+        // lobby_sync: lightweight pub/sub for fast lobby updates
+        const onLobbySync = async (payload: any) => {
+          if (!mountedRef.current) return;
+          if (payload?.room !== roomId) return;
+
+          switch (payload.type) {
+            case 'announce': {
+              // Another player announced themselves → update our local players map
+              const p = { id: payload.id, name: payload.name, isInviter: payload.isInviter, lastSeen: Date.now() };
+              playersRef.current = { ...playersRef.current, [payload.id]: p };
+              setPlayers({ ...playersRef.current });
+              
+              // Only reply ONCE when we first hear from this peer (prevent echo loop)
+              if (payload.id !== currentUser.id && !acknowledgedRef.current.has(payload.id)) {
+                acknowledgedRef.current.add(payload.id);
+                await insforge.realtime.publish(channel, 'lobby_sync', {
+                  type: 'announce',
+                  room: roomId,
+                  id: currentUser.id,
+                  name: myName,
+                  isInviter
+                });
+              }
+              break;
+            }
+            case 'room_state': {
+              // Full state broadcast from host
+              if (!payload.players) return;
+              const next = { ...playersRef.current };
+              Object.entries(payload.players).forEach(([id, p]: [string, any]) => {
+                next[id] = { ...p, lastSeen: Date.now() };
+              });
+              playersRef.current = next;
+              setPlayers({ ...next });
+
+              // Also sync game state if we're still waiting
+              if (payload.gameState &&
+                  (gameStateRef.current.status === 'waiting' || !gameStateRef.current.status)) {
+                gameStateRef.current = payload.gameState;
+                setGameState(payload.gameState);
+              }
+              break;
+            }
+          }
+        };
+
+        // state_update: syncs game state changes (moves, turns, etc.)
+        const onStateUpdate = (payload: any) => {
+          if (!mountedRef.current) return;
+          if (payload?.room !== roomId) return;
+          gameStateRef.current = payload;
+          setGameState(payload);
+          if (payload.status === 'finished' && payload.winnerId === currentUser.id) {
+            handleWin(payload.winnerId);
+          }
+        };
+
+        // fast_click uses event-sourcing to avoid race conditions
+        const onGameAction = (payload: any) => {
+          if (!mountedRef.current) return;
+          if (payload?.room !== roomId) return;
+          if (payload.type === 'click' && gameType === 'fast_click') {
+            let winnerId: string | null = null;
+            setGameState((prev: any) => {
+              if (!prev.logic?.clicks || prev.status !== 'playing') return prev;
+              const current = (prev.logic.clicks[payload.userId] || 0) + 1;
+              const clicks = { ...prev.logic.clicks, [payload.userId]: current };
+              if (isInviter && current >= 30) winnerId = payload.userId;
+              return { ...prev, logic: { ...prev.logic, clicks } };
+            });
+            if (winnerId) {
+              declareWinner(winnerId, `⚡ ${payload.userName} reached 30 clicks first!`);
+            }
+          }
+        };
+
+        insforge.realtime.on('lobby_sync',   onLobbySync);
+        insforge.realtime.on('state_update', onStateUpdate);
+        insforge.realtime.on('game_action',  onGameAction);
+
+        cleanupHandlers = () => {
+          insforge.realtime.off('lobby_sync',   onLobbySync);
+          insforge.realtime.off('state_update', onStateUpdate);
+          insforge.realtime.off('game_action',  onGameAction);
+        };
+
+        // 5. Initial announce: tell everyone we're here
+        const announce = async () => {
+          if (!mountedRef.current) return;
+          await insforge.realtime.publish(channel, 'lobby_sync', {
+            type: 'announce',
             room: roomId,
             id: currentUser.id,
             name: myName,
-            isInviter,
-            gameState: gameStateRef.current // Send state along with ack
+            isInviter
           });
-          
-          return next;
-        });
-      };
+        };
 
-      handlers.player_ack = (payload: any) => {
-        if (!mountedRef.current) return;
-        if (payload.room !== roomId) return;
+        // 6. Add self to local players immediately
+        const selfEntry = { id: currentUser.id, name: myName, isInviter, lastSeen: Date.now() };
+        playersRef.current = { [currentUser.id]: selfEntry };
+        setPlayers({ [currentUser.id]: selfEntry });
 
-        updatePlayers(prev => ({ ...prev, [payload.id]: payload }));
+        // 7. Pull current room members from DB (catches players who joined before us)
+        await refreshPlayersFromDB();
 
-        // If the sender provided a game state and mine is empty/initial, adopt it
-        if (payload.gameState && (gameStateRef.current.status === 'waiting' || !gameStateRef.current.status)) {
-          setGameState(payload.gameState);
-          gameStateRef.current = payload.gameState;
+        // 8. Announce ourselves on the realtime channel
+        await announce();
+
+        // 9. Host also broadcasts current room state to help latecomers
+        if (isInviter) {
+          await insforge.realtime.publish(channel, 'lobby_sync', {
+            type: 'room_state',
+            room: roomId,
+            players: playersRef.current,
+            gameState: gameStateRef.current
+          });
         }
-      };
 
-      handlers.room_sync = (payload: any) => {
-        if (!mountedRef.current) return;
-        if (payload.room !== roomId) return;
-        
-        if (payload.players) updatePlayers(() => payload.players);
-        if (payload.gameState) {
-          setGameState(payload.gameState);
-          gameStateRef.current = payload.gameState;
-        }
-      };
+        // Show lobby
+        if (mountedRef.current) setPhase('lobby');
 
-      handlers.state_update = (payload: any) => {
-        if (!mountedRef.current) return;
-        if (payload.room !== roomId) return;
+        // 10. Heartbeat: keep DB presence fresh ALWAYS, pub/sub announce only in lobby
+        heartbeatInterval = setInterval(async () => {
+          if (!mountedRef.current) return;
+          try {
+            // ALWAYS update last_seen in DB so we never get evicted (even mid-game)
+            await upsertSelfInDB();
 
-        setGameState(payload);
-        gameStateRef.current = payload;
-        if (payload.status === 'finished' && payload.winnerId === currentUser.id) {
-          handleWin(payload.winnerId);
-        }
-      };
-
-      handlers.game_action = (payload: any) => {
-        if (!mountedRef.current) return;
-        if (payload.room !== roomId) return;
-
-        if (payload.type === 'click' && gameType === 'fast_click') {
-          let winnerDetected = false;
-          setGameState((prev: any) => {
-            if (!prev.logic || !prev.logic.clicks) return prev;
-            const currentClicks = (prev.logic.clicks[payload.userId] || 0) + 1;
-            const newClicks = { ...prev.logic.clicks, [payload.userId]: currentClicks };
-            const newState = { ...prev, logic: { ...prev.logic, clicks: newClicks } };
-            
-            if (isInviter && currentClicks >= 30 && prev.status === 'playing') {
-              winnerDetected = true;
+            // Pub/sub lobby actions only while waiting
+            if (gameStateRef.current.status === 'waiting') {
+              await announce();
+              // Host re-broadcasts full room state to catch latecomers
+              if (isInviter) {
+                await insforge.realtime.publish(channel, 'lobby_sync', {
+                  type: 'room_state',
+                  room: roomId,
+                  players: playersRef.current,
+                  gameState: gameStateRef.current
+                });
+              }
             }
-            return newState;
-          });
-          if (winnerDetected) {
-            declareWinner(payload.userId, `⚡ ${payload.userName} reached 30 clicks first!`);
+          } catch (e) {
+            // non-fatal
           }
-        }
-      };
+        }, 2000);
 
-      // Assign handlers
-      insforge.realtime.on('player_joined', handlers.player_joined);
-      insforge.realtime.on('player_ack', handlers.player_ack);
-      insforge.realtime.on('room_sync', handlers.room_sync);
-      insforge.realtime.on('state_update', handlers.state_update);
-      insforge.realtime.on('game_action', handlers.game_action);
+        // 11. DB polling: player list refresh (lobby only) + game state fallback (every 2s)
+        dbRefreshInterval = setInterval(async () => {
+          if (!mountedRef.current) return;
+          await refreshPlayersFromDB();   // no-op when game is playing
+          await pollGameStateFromDB();    // catches missed state_update pub/sub events
+        }, 2000);
 
-      // Announce myself after subscription is ready
-      // Small delay to ensure subscription is fully propagated in server
-      setTimeout(() => {
-        if (!mountedRef.current) return;
-        insforge.realtime.publish(channel, 'player_joined', {
-          room: roomId,
-          id: currentUser.id,
-          name: myName,
-          isInviter,
-        });
-      }, 300);
-
-      // Register self immediately
-      setPlayers({
-        [currentUser.id]: { id: currentUser.id, name: myName, isInviter }
-      });
-
-      return () => {
-        insforge.realtime.off('player_joined', handlers.player_joined);
-        insforge.realtime.off('player_ack', handlers.player_ack);
-        insforge.realtime.off('room_sync', handlers.room_sync);
-        insforge.realtime.off('state_update', handlers.state_update);
-        insforge.realtime.off('game_action', handlers.game_action);
-      };
-      } catch (err) {
-        console.error('[GameRoom] Initialization failed:', err);
-        return () => {};
+      } catch (err: any) {
+        console.error('[GameRoom] Init failed:', err);
+        if (mountedRef.current) setError('Connection failed. Please close and try again.');
+        setPhase('lobby');
       }
     };
 
-    let stopGame: (() => void) | undefined;
-    initGame().then(cleanup => { stopGame = cleanup; });
+    init();
 
     return () => {
+      mountedRef.current = false;
+      clearInterval(heartbeatInterval);
+      clearInterval(dbRefreshInterval);
       if (reactionTimer) clearTimeout(reactionTimer);
-      if (stopGame) stopGame();
+      if (cleanupHandlers) cleanupHandlers();
       insforge.realtime.unsubscribe(channel);
+
+      // Remove self from DB when leaving (fire-and-forget, component is unmounting)
+      void (async () => {
+        try {
+          await insforge.database
+            .from('game_session_players')
+            .delete()
+            .eq('room_id', roomId)
+            .eq('user_id', currentUser.id);
+        } catch (_) { /* non-fatal */ }
+      })();
     };
-  }, [roomId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, currentUser.id]);
+
+  // ══════════════════════════════════════════════════════════════════
+  // ── GAME ACTIONS ──────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════
 
   const handleWin = async (winnerId: string) => {
     if (hasWon) return;
@@ -230,230 +411,222 @@ export default function GameOverlay({ gameType, roomId, currentUser, targetType,
     }
   };
 
-  const syncState = (newState: any) => {
+  const syncState = async (newState: any) => {
     if (!mountedRef.current) return;
-    setGameState(newState);
-    gameStateRef.current = newState;
-    insforge.realtime.publish(`game_room:${roomId}`, 'state_update', { 
-      ...newState, 
-      room: roomId 
-    });
+    const state = { ...newState, room: roomId };
+    gameStateRef.current = state;
+    setGameState(state);
+
+    // Broadcast via pub/sub (fast path — best case delivery)
+    await insforge.realtime.publish(channelRef.current, 'state_update', state);
+
+    // ALSO persist full state to DB with writer ID (fallback for missed pub/sub events)
+    // The opponent polls this every 2s and applies it ONLY if we are the writer (not themselves)
+    void (async () => {
+      try {
+        await insforge.database.rpc('sync_game_state', {
+          p_room_id: roomId,
+          p_status: state.status || 'playing',
+          p_game_state_json: JSON.stringify(state),
+          p_writer_id: currentUser.id     // ← lets the other player skip their own writes
+        });
+      } catch (_) { /* non-fatal */ }
+    })();
   };
 
-  // The "inviter" goes first (p1), "accepter" goes second (p2)
   const startGame = () => {
-    const allPlayerIds = Object.keys(players);
-    const inviterId = allPlayerIds.find(id => players[id]?.isInviter);
-    const accepterId = allPlayerIds.find(id => !players[id]?.isInviter);
-    const p1 = inviterId || allPlayerIds[0];
-    const p2 = accepterId || (allPlayerIds.length > 1 ? allPlayerIds.find(id => id !== p1) : allPlayerIds[0]);
+    // Determine p1/p2 from known players
+    const allIds = Object.keys(playersRef.current);
+    const p1 = allIds.find(id => playersRef.current[id]?.isInviter) || allIds[0];
+    const p2 = allIds.find(id => !playersRef.current[id]?.isInviter) ||
+               (allIds.length > 1 ? allIds.find(id => id !== p1)! : allIds[0]);
 
-    let initialLogicState: any = {};
-    if (gameType === 'tic_tac_toe') initialLogicState = { board: Array(9).fill(null), turn: p1, p1, p2 };
-    if (gameType === 'dice_roll') initialLogicState = { rolls: {}, turnOrder: [p1, p2], currentTurnIdx: 0 };
-    if (gameType === 'fast_click') initialLogicState = { clicks: {} };
-    if (gameType === 'math_race') initialLogicState = { qIndex: Math.floor(Math.random() * MATH_QUESTIONS.length) };
-    if (gameType === 'word_scramble') initialLogicState = { wIndex: Math.floor(Math.random() * SCRAMBLED.length) };
-    if (gameType === 'trivia') initialLogicState = { tIndex: Math.floor(Math.random() * TRIVIA.length) };
+    let logic: any = {};
+    if (gameType === 'tic_tac_toe')  logic = { board: Array(9).fill(null), turn: p1, p1, p2 };
+    if (gameType === 'dice_roll')    logic = { rolls: {}, turnOrder: [p1, p2], currentTurnIdx: 0 };
+    if (gameType === 'fast_click')   logic = { clicks: { [p1]: 0, [p2]: 0 } };
+    if (gameType === 'math_race')    logic = { qIndex: Math.floor(Math.random() * MATH_QUESTIONS.length) };
+    if (gameType === 'word_scramble')logic = { wIndex: Math.floor(Math.random() * SCRAMBLED.length) };
+    if (gameType === 'trivia')       logic = { tIndex: Math.floor(Math.random() * TRIVIA.length) };
+    if (gameType === 'guess_number') logic = { target: Math.floor(Math.random() * 100) + 1, turn: p1, p1, p2 };
+    if (gameType === 'coin_toss')    logic = { phase: 'choose', turn: p1, p1, p2 };
+    if (gameType === 'rps')          logic = { moves: {}, p1, p2 };
     if (gameType === 'reaction') {
-      initialLogicState = { phase: 'waiting', color: 'bg-red-500', firstTurn: p1 };
+      logic = { phase: 'waiting', color: 'bg-red-500', firstTurn: p1 };
       const timer = setTimeout(() => {
-        syncState({ status: 'playing', logic: { phase: 'go', color: 'bg-green-400', start: Date.now(), firstTurn: p1 }, logs: ['🟢 GO!'] });
+        syncState({ status: 'playing', logic: { phase: 'go', color: 'bg-green-400', start: Date.now(), firstTurn: p1 }, logs: ['🟢 GO!'], room: roomId });
       }, 2000 + Math.random() * 3000);
       setReactionTimer(timer);
     }
-    if (gameType === 'guess_number') initialLogicState = { target: Math.floor(Math.random() * 100) + 1, turn: p1, p1, p2 };
-    if (gameType === 'coin_toss') initialLogicState = { phase: 'choose', turn: p1, p1, p2 };
-    if (gameType === 'rps') initialLogicState = { moves: {}, p1, p2 };
 
-    syncState({ status: 'playing', logic: initialLogicState, logs: ['🎮 Game started! Inviter goes first.'] });
+    syncState({ status: 'playing', logic, logs: ['🎮 Game started! Host goes first.'], room: roomId });
   };
 
   const declareWinner = (winnerId: string, reason: string) => {
     syncState({
-      ...gameState,
+      ...gameStateRef.current,
       status: 'finished',
       winnerId,
-      logs: [...(gameState.logs || []), reason]
+      logs: [...(gameStateRef.current.logs || []), reason]
     });
   };
 
-  // --- Tic Tac Toe ---
+  // ── Game-specific handlers ─────────────────────────────────────────
+
   const handleTTTClick = (index: number) => {
-    if (gameState.status !== 'playing') return;
-    if (gameState.logic.turn !== currentUser.id) return;
-    if (gameState.logic.board[index]) return;
-
-    const newBoard = [...gameState.logic.board];
-    newBoard[index] = gameState.logic.turn === gameState.logic.p1 ? 'X' : 'O';
-
+    const gs = gameStateRef.current;
+    if (gs.status !== 'playing' || gs.logic.turn !== currentUser.id || gs.logic.board[index]) return;
+    const board = [...gs.logic.board];
+    board[index] = gs.logic.turn === gs.logic.p1 ? 'X' : 'O';
     const lines = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
     let won = false;
-    for (const [a, b, c] of lines) {
-      if (newBoard[a] && newBoard[a] === newBoard[b] && newBoard[a] === newBoard[c]) { won = true; break; }
-    }
-
-    if (won) {
-      declareWinner(currentUser.id, `🏆 ${players[currentUser.id]?.name || 'Player'} wins!`);
-    } else if (!newBoard.includes(null)) {
-      declareWinner('draw', "🤝 It's a draw!");
-    } else {
-      const nextTurn = gameState.logic.turn === gameState.logic.p1 ? gameState.logic.p2 : gameState.logic.p1;
-      syncState({ ...gameState, logic: { ...gameState.logic, board: newBoard, turn: nextTurn } });
+    for (const [a,b,c] of lines) { if (board[a] && board[a]===board[b] && board[a]===board[c]) { won=true; break; } }
+    if (won) declareWinner(currentUser.id, `🏆 ${playersRef.current[currentUser.id]?.name || 'Player'} wins!`);
+    else if (!board.includes(null)) declareWinner('draw', "🤝 It's a draw!");
+    else {
+      const nextTurn = gs.logic.turn === gs.logic.p1 ? gs.logic.p2 : gs.logic.p1;
+      syncState({ ...gs, logic: { ...gs.logic, board, turn: nextTurn } });
     }
   };
 
-  // --- Fast Click ---
-  const handleFastClick = () => {
-    if (gameState.status !== 'playing') return;
-    // Instead of syncing full state (which causes race conditions in fast clicking),
-    // we broadcast a click event. Everyone updates their local count.
-    insforge.realtime.publish(`game_room:${roomId}`, 'game_action', {
-      type: 'click',
+  const handleFastClick = async () => {
+    if (gameStateRef.current.status !== 'playing') return;
+    await insforge.realtime.publish(channelRef.current, 'game_action', {
+      room: roomId, type: 'click',
       userId: currentUser.id,
-      userName: currentUser.profile?.name || currentUser.name || 'Player'
+      userName: myName
     });
   };
 
-  // --- Dice Roll (turn-based) ---
   const handleDiceRoll = () => {
-    if (gameState.status !== 'playing') return;
-    const { turnOrder, currentTurnIdx } = gameState.logic;
-    const myTurn = turnOrder && turnOrder[currentTurnIdx] === currentUser.id;
-    if (!myTurn) return;
-    if (gameState.logic.rolls[currentUser.id]) return;
-
+    const gs = gameStateRef.current;
+    if (gs.status !== 'playing') return;
+    const { turnOrder, currentTurnIdx, rolls } = gs.logic;
+    if (turnOrder[currentTurnIdx] !== currentUser.id || rolls[currentUser.id]) return;
     const roll = Math.floor(Math.random() * 100) + 1;
-    const newRolls = { ...gameState.logic.rolls, [currentUser.id]: roll };
-    const nextIdx = (currentTurnIdx + 1) % (turnOrder?.length || 1);
-    const allRolled = Object.keys(newRolls).length >= (turnOrder?.length || 1);
-
+    const newRolls = { ...rolls, [currentUser.id]: roll };
+    const nextIdx = (currentTurnIdx + 1) % turnOrder.length;
+    const allRolled = Object.keys(newRolls).length >= turnOrder.length;
     if (allRolled) {
-      // Resolve immediately
       let maxScore = -1; let winner = '';
-      Object.entries(newRolls).forEach(([uid, score]: any) => {
-        if (score > maxScore) { maxScore = score; winner = uid; }
-      });
-      syncState({ ...gameState, status: 'finished', winnerId: winner, logic: { ...gameState.logic, rolls: newRolls }, logs: [...(gameState.logs || []), `🎲 ${players[winner]?.name || 'Player'} rolled ${maxScore} and wins!`] });
+      Object.entries(newRolls).forEach(([uid, score]: any) => { if (score > maxScore) { maxScore = score; winner = uid; } });
+      syncState({ ...gs, status: 'finished', winnerId: winner, logic: { ...gs.logic, rolls: newRolls }, logs: [...(gs.logs||[]), `🎲 ${playersRef.current[winner]?.name || 'Player'} rolled ${maxScore} and wins!`] });
     } else {
-      syncState({ ...gameState, logic: { ...gameState.logic, rolls: newRolls, currentTurnIdx: nextIdx }, logs: [...(gameState.logs || []), `🎲 ${players[currentUser.id]?.name} rolled ${roll}. Next player's turn!`] });
+      syncState({ ...gs, logic: { ...gs.logic, rolls: newRolls, currentTurnIdx: nextIdx }, logs: [...(gs.logs||[]), `🎲 ${playersRef.current[currentUser.id]?.name} rolled ${roll}. Next player's turn!`] });
     }
   };
 
-  // --- Coin Toss (inviter picks, result auto) ---
   const handleCoinToss = (choice: 'heads' | 'tails') => {
-    if (gameState.status !== 'playing') return;
-    if (gameState.logic.phase !== 'choose') return;
-    if (gameState.logic.turn !== currentUser.id) return;
-
+    const gs = gameStateRef.current;
+    if (gs.status !== 'playing' || gs.logic.phase !== 'choose' || gs.logic.turn !== currentUser.id) return;
     const result = Math.random() < 0.5 ? 'heads' : 'tails';
     const won = result === choice;
-    const winnerId = won ? currentUser.id : (gameState.logic.p2 === currentUser.id ? gameState.logic.p1 : gameState.logic.p2);
-    declareWinner(winnerId, `🪙 Coin landed on ${result}! ${players[winnerId]?.name || 'Player'} wins!`);
+    const loser = gs.logic.p2 === currentUser.id ? gs.logic.p1 : gs.logic.p2;
+    declareWinner(won ? currentUser.id : loser, `🪙 Coin landed on ${result}! ${playersRef.current[won ? currentUser.id : loser]?.name || 'Player'} wins!`);
   };
 
-  // --- RPS ---
   const handleRPS = (move: 'rock' | 'paper' | 'scissors') => {
-    if (gameState.status !== 'playing') return;
-    if (gameState.logic.moves[currentUser.id]) return;
-
-    const newMoves = { ...gameState.logic.moves, [currentUser.id]: move };
-    const playerCount = Object.keys(players).length;
-    
-    if (Object.keys(newMoves).length >= Math.min(playerCount, 2)) {
-      const movesList = Object.entries(newMoves);
-      if (movesList.length < 2) {
-        syncState({ ...gameState, logic: { ...gameState.logic, moves: newMoves }, logs: [...(gameState.logs || []), `✋ Waiting for opponent...`] });
-        return;
-      }
-      const [uid1, m1] = movesList[0] as [string, string];
-      const [uid2, m2] = movesList[1] as [string, string];
-      const beats: Record<string, string> = { rock: 'scissors', scissors: 'paper', paper: 'rock' };
-      let winner: string;
-      let reason: string;
-      if (m1 === m2) {
-        winner = 'draw';
-        reason = `🤝 Both chose ${m1}! It's a draw!`;
-      } else if (beats[m1] === m2) {
-        winner = uid1;
-        reason = `🏆 ${players[uid1]?.name} wins! ${m1} beats ${m2}!`;
-      } else {
-        winner = uid2;
-        reason = `🏆 ${players[uid2]?.name} wins! ${m2} beats ${m1}!`;
-      }
+    const gs = gameStateRef.current;
+    if (gs.status !== 'playing' || gs.logic.moves[currentUser.id]) return;
+    const newMoves = { ...gs.logic.moves, [currentUser.id]: move };
+    if (Object.keys(newMoves).length >= 2) {
+      const [[uid1, m1], [uid2, m2]] = Object.entries(newMoves) as [string, string][];
+      const beats: Record<string,string> = { rock: 'scissors', scissors: 'paper', paper: 'rock' };
+      let winner: string, reason: string;
+      if (m1 === m2) { winner = 'draw'; reason = `🤝 Both chose ${m1}! It's a draw!`; }
+      else if (beats[m1] === m2) { winner = uid1; reason = `🏆 ${playersRef.current[uid1]?.name} wins! ${m1} beats ${m2}!`; }
+      else { winner = uid2; reason = `🏆 ${playersRef.current[uid2]?.name} wins! ${m2} beats ${m1}!`; }
       declareWinner(winner, reason);
     } else {
-      syncState({ ...gameState, logic: { ...gameState.logic, moves: newMoves }, logs: [...(gameState.logs || []), `✋ Waiting for opponent...`] });
+      syncState({ ...gs, logic: { ...gs.logic, moves: newMoves }, logs: [...(gs.logs||[]), `✋ Waiting for opponent...`] });
     }
   };
 
-  // --- Input Submit (Math/Word/Guess) ---
   const handleInputSubmit = (e: any) => {
     e.preventDefault();
-    if (gameState.status !== 'playing') return;
+    const gs = gameStateRef.current;
+    if (gs.status !== 'playing') return;
     const val = localInput.trim().toLowerCase();
     setLocalInput('');
-
     if (gameType === 'math_race') {
-      if (val === MATH_QUESTIONS[gameState.logic.qIndex].a)
-        declareWinner(currentUser.id, `🏆 ${players[currentUser.id]?.name} solved it first!`);
-      else syncState({ ...gameState, logs: [...(gameState.logs || []), `❌ That's wrong, try again!`] });
+      if (val === MATH_QUESTIONS[gs.logic.qIndex].a) declareWinner(currentUser.id, `🏆 ${playersRef.current[currentUser.id]?.name} solved it first!`);
+      else syncState({ ...gs, logs: [...(gs.logs||[]), `❌ That's wrong, try again!`] });
     } else if (gameType === 'word_scramble') {
-      if (val === SCRAMBLED[gameState.logic.wIndex].a)
-        declareWinner(currentUser.id, `🏆 ${players[currentUser.id]?.name} unscrambled it first!`);
-      else syncState({ ...gameState, logs: [...(gameState.logs || []), `❌ Nope! Try again.`] });
+      if (val === SCRAMBLED[gs.logic.wIndex].a) declareWinner(currentUser.id, `🏆 ${playersRef.current[currentUser.id]?.name} unscrambled it first!`);
+      else syncState({ ...gs, logs: [...(gs.logs||[]), `❌ Nope! Try again.`] });
     } else if (gameType === 'guess_number') {
-      const { turn, p1, p2 } = gameState.logic;
+      const { turn, p1, p2 } = gs.logic;
       if (turn !== currentUser.id) return;
       const num = parseInt(val);
       if (isNaN(num)) return;
-      if (num === gameState.logic.target) {
-        declareWinner(currentUser.id, `🏆 ${players[currentUser.id]?.name} guessed ${num}!`);
-      } else {
-        const hint = num < gameState.logic.target ? '📈 Too low!' : '📉 Too high!';
-        const nextTurn = turn === p1 ? p2 : p1;
-        syncState({ ...gameState, logic: { ...gameState.logic, turn: nextTurn }, logs: [...(gameState.logs || []), hint] });
+      if (num === gs.logic.target) declareWinner(currentUser.id, `🏆 ${playersRef.current[currentUser.id]?.name} guessed ${num}!`);
+      else {
+        const hint = num < gs.logic.target ? '📈 Too low!' : '📉 Too high!';
+        syncState({ ...gs, logic: { ...gs.logic, turn: turn === p1 ? p2 : p1 }, logs: [...(gs.logs||[]), hint] });
       }
     }
   };
 
-  // ──────── RENDER ────────
+  // ══════════════════════════════════════════════════════════════════
+  // ── RENDER ────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════
 
-  const renderWaiting = () => {
-    const playerCount = Object.keys(players).length;
-    const canStart = playerCount >= 2;
-    return (
-      <div className="flex flex-col items-center justify-center p-12 text-center text-white/50">
-        <div className="text-6xl mb-6 animate-bounce">{GAME_TYPES[gameType]?.icon}</div>
-        <h3 className="text-2xl font-black text-white tracking-tight mb-2">Waiting for players...</h3>
-        <p className="mb-6 text-sm">Players joined: <span className="text-[#eaff96] font-bold">{playerCount}</span></p>
-        <div className="flex flex-wrap gap-3 justify-center mb-8">
-          {Object.values(players).map((p: any) => (
-            <div key={p.id} className="flex items-center gap-2 bg-white/5 border border-white/10 px-4 py-2 rounded-full">
-              <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-              <span className="text-white text-sm font-semibold">{p.name}</span>
-              {p.isInviter && <Crown size={12} className="text-[#eaff96]" />}
-            </div>
-          ))}
-        </div>
-        {isInviter && (
-          <button
-            onClick={startGame}
-            disabled={!canStart}
-            className="bg-[#eaff96] text-black font-black px-8 py-3 rounded-full hover:scale-105 transition-transform shadow-lg shadow-[#eaff96]/20 disabled:opacity-40"
-          >
-            {canStart ? 'Start Game Now' : 'Waiting for opponent...'}
-          </button>
-        )}
-        {!isInviter && (
-          <div className="flex items-center gap-2 text-white/40 text-sm">
-            <Clock size={16} className="animate-spin" />
-            <span>Waiting for host to start the game...</span>
+  const playerCount = Object.keys(players).length;
+  const canStart    = playerCount >= 2;
+
+  const renderWaiting = () => (
+    <div className="flex flex-col items-center justify-center p-12 text-center text-white/50">
+      <div className="text-6xl mb-6 animate-bounce">{GAME_TYPES[gameType]?.icon}</div>
+      <h3 className="text-2xl font-black text-white tracking-tight mb-2">Waiting for players...</h3>
+      <p className="mb-2 text-sm text-white/30">
+        Room: <span className="font-mono text-[10px] select-all">{roomId}</span>
+      </p>
+      <p className="mb-6 text-sm">
+        Players in lobby: <span className="text-[#eaff96] font-bold text-lg">{playerCount}</span>
+        <span className="text-white/30"> / 2</span>
+      </p>
+
+      {/* Player chips */}
+      <div className="flex flex-wrap gap-3 justify-center mb-8">
+        {Object.values(players).map((p: any) => (
+          <div key={p.id} className="flex items-center gap-2 bg-white/5 border border-white/10 px-4 py-2 rounded-full animate-in fade-in duration-300">
+            <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+            <span className="text-white text-sm font-semibold">{p.name}</span>
+            {p.isInviter && <Crown size={12} className="text-[#eaff96]" />}
+            {p.id === currentUser.id && <span className="text-[9px] text-white/30 font-bold uppercase tracking-widest">(you)</span>}
+          </div>
+        ))}
+        {playerCount < 2 && (
+          <div className="flex items-center gap-2 bg-white/[0.03] border border-white/5 border-dashed px-4 py-2 rounded-full">
+            <div className="w-2 h-2 rounded-full bg-white/20 animate-pulse" />
+            <span className="text-white/20 text-sm">Waiting for opponent...</span>
           </div>
         )}
       </div>
-    );
-  };
+
+      {/* Action buttons */}
+      <div className="flex gap-4">
+        {isInviter ? (
+          <button
+            onClick={startGame}
+            disabled={!canStart}
+            className="bg-[#eaff96] text-black font-black px-8 py-3 rounded-full hover:scale-105 transition-all shadow-lg shadow-[#eaff96]/20 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+          >
+            {canStart ? '▶ Start Game Now' : 'Waiting for opponent...'}
+          </button>
+        ) : (
+          <div className="flex items-center gap-3 text-[#eaff96] text-sm font-bold bg-[#eaff96]/10 px-6 py-2 rounded-full border border-[#eaff96]/20">
+            <Clock size={16} className="animate-spin" />
+            <span>Waiting for host to start...</span>
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <p className="mt-6 text-red-400 text-xs font-semibold">{error}</p>
+      )}
+    </div>
+  );
 
   const renderFinished = () => (
     <div className="flex flex-col items-center justify-center p-12 text-center">
@@ -494,12 +667,8 @@ export default function GameOverlay({ gameType, roomId, currentUser, targetType,
             </div>
             <div className="grid grid-cols-3 gap-3 bg-white/5 p-4 rounded-3xl">
               {logic.board.map((cell: any, i: number) => (
-                <button
-                  key={i}
-                  onClick={() => handleTTTClick(i)}
-                  disabled={!isMyTurn || !!cell}
-                  className="w-24 h-24 bg-[#141414] rounded-2xl flex items-center justify-center text-5xl font-bold text-white hover:bg-[#1a1a1a] transition-colors shadow-sm disabled:cursor-not-allowed"
-                >
+                <button key={i} onClick={() => handleTTTClick(i)} disabled={!isMyTurn || !!cell}
+                  className="w-24 h-24 bg-[#141414] rounded-2xl flex items-center justify-center text-5xl font-bold text-white hover:bg-[#1a1a1a] transition-colors shadow-sm disabled:cursor-not-allowed">
                   {cell === 'X' ? <span className="text-[#eaff96]">X</span> : cell === 'O' ? <span className="text-indigo-400">O</span> : ''}
                 </button>
               ))}
@@ -508,25 +677,16 @@ export default function GameOverlay({ gameType, roomId, currentUser, targetType,
         );
       }
       case 'fast_click': {
-        const myClicks = logic.clicks[currentUser.id] || 0;
-        const opponentClicks = Object.entries(logic.clicks).filter(([id]) => id !== currentUser.id).map(([, v]) => v as number)[0] || 0;
+        const myClicks = logic.clicks?.[currentUser.id] || 0;
+        const opponentClicks = Object.entries(logic.clicks || {}).filter(([id]) => id !== currentUser.id).map(([,v]) => v as number)[0] || 0;
         return (
           <div className="flex flex-col items-center gap-6">
             <div className="flex gap-8 mb-2">
-              <div className="text-center">
-                <div className="text-5xl font-black text-[#eaff96]">{myClicks}</div>
-                <div className="text-xs text-white/30 font-bold uppercase mt-1">You</div>
-              </div>
+              <div className="text-center"><div className="text-5xl font-black text-[#eaff96]">{myClicks}</div><div className="text-xs text-white/30 font-bold uppercase mt-1">You</div></div>
               <div className="text-white/10 text-3xl font-black self-center">vs</div>
-              <div className="text-center">
-                <div className="text-5xl font-black text-white/40">{opponentClicks}</div>
-                <div className="text-xs text-white/30 font-bold uppercase mt-1">Opponent</div>
-              </div>
+              <div className="text-center"><div className="text-5xl font-black text-white/40">{opponentClicks}</div><div className="text-xs text-white/30 font-bold uppercase mt-1">Opponent</div></div>
             </div>
-            <button
-              onClick={handleFastClick}
-              className="w-full bg-[#eaff96] py-16 rounded-[3rem] text-black text-3xl font-black uppercase tracking-widest active:scale-95 transition-transform shadow-2xl"
-            >
+            <button onClick={handleFastClick} className="w-full bg-[#eaff96] py-16 rounded-[3rem] text-black text-3xl font-black uppercase tracking-widest active:scale-95 transition-transform shadow-2xl">
               CLICK! ({30 - myClicks} left)
             </button>
           </div>
@@ -535,21 +695,18 @@ export default function GameOverlay({ gameType, roomId, currentUser, targetType,
       case 'dice_roll': {
         const { turnOrder, currentTurnIdx, rolls } = logic;
         const isMyTurn = turnOrder && turnOrder[currentTurnIdx] === currentUser.id;
-        const myRoll = rolls[currentUser.id];
+        const myRoll = rolls?.[currentUser.id];
         return (
           <div className="flex flex-col items-center gap-6">
             <div className={`text-sm font-black uppercase tracking-widest px-4 py-2 rounded-full ${isMyTurn ? 'bg-[#eaff96] text-black' : 'bg-white/5 text-white/40'}`}>
-              {isMyTurn ? '🎲 Your Turn to Roll!' : "⏳ Waiting for opponent..."}
+              {isMyTurn ? '🎲 Your Turn to Roll!' : '⏳ Waiting for opponent...'}
             </div>
-            <button
-              onClick={handleDiceRoll}
-              disabled={!!myRoll || !isMyTurn}
-              className="w-48 h-48 bg-[#141414] border border-white/10 rounded-3xl flex items-center justify-center text-6xl shadow-xl hover:bg-[#1a1a1a] transition-colors disabled:opacity-50 disabled:scale-95"
-            >
+            <button onClick={handleDiceRoll} disabled={!!myRoll || !isMyTurn}
+              className="w-48 h-48 bg-[#141414] border border-white/10 rounded-3xl flex items-center justify-center text-6xl shadow-xl hover:bg-[#1a1a1a] transition-colors disabled:opacity-50">
               {myRoll ? `${myRoll}` : '🎲'}
             </button>
             <div className="w-full space-y-2">
-              {Object.entries(rolls).map(([uid, roll]: any) => (
+              {Object.entries(rolls || {}).map(([uid, roll]: any) => (
                 <div key={uid} className="flex items-center justify-between bg-white/5 rounded-xl px-4 py-2">
                   <span className="text-white/60 text-sm">{players[uid]?.name || 'Player'}</span>
                   <span className="text-[#eaff96] font-black">{roll}</span>
@@ -561,24 +718,16 @@ export default function GameOverlay({ gameType, roomId, currentUser, targetType,
       }
       case 'math_race':
       case 'word_scramble': {
-        const prompt = gameType === 'math_race'
-          ? MATH_QUESTIONS[logic.qIndex]?.q
-          : SCRAMBLED[logic.wIndex]?.q.toUpperCase();
+        const prompt = gameType === 'math_race' ? MATH_QUESTIONS[logic.qIndex]?.q : SCRAMBLED[logic.wIndex]?.q.toUpperCase();
         return (
           <div className="flex flex-col items-center w-full max-w-sm mx-auto gap-4">
             <div className="bg-[#141414] border border-white/5 w-full p-8 rounded-[2rem] text-center shadow-xl">
-              <div className="text-white/40 text-sm font-semibold uppercase tracking-widest mb-4">
-                {gameType === 'math_race' ? 'Solve First!' : 'Unscramble!'}
-              </div>
+              <div className="text-white/40 text-sm font-semibold uppercase tracking-widest mb-4">{gameType === 'math_race' ? 'Solve First!' : 'Unscramble!'}</div>
               <div className="text-4xl font-black text-white tracking-widest">{prompt}</div>
             </div>
             <form onSubmit={handleInputSubmit} className="w-full flex">
-              <input
-                autoFocus value={localInput} onChange={e => setLocalInput(e.target.value)}
-                type="text"
-                className="flex-1 bg-[#1a1a1a] rounded-l-full px-6 py-4 text-white focus:outline-none border border-white/10 border-r-0"
-                placeholder="Your answer..."
-              />
+              <input autoFocus value={localInput} onChange={e => setLocalInput(e.target.value)} type="text"
+                className="flex-1 bg-[#1a1a1a] rounded-l-full px-6 py-4 text-white focus:outline-none border border-white/10 border-r-0" placeholder="Your answer..." />
               <button type="submit" className="bg-[#eaff96] text-black px-8 font-bold rounded-r-full hover:brightness-110">Go</button>
             </form>
             <div className="w-full max-h-24 overflow-y-auto text-white/40 text-sm flex flex-col items-center gap-1">
@@ -600,12 +749,8 @@ export default function GameOverlay({ gameType, roomId, currentUser, targetType,
             </div>
             {isMyTurn && (
               <form onSubmit={handleInputSubmit} className="w-full flex">
-                <input
-                  autoFocus value={localInput} onChange={e => setLocalInput(e.target.value)}
-                  type="number" min="1" max="100"
-                  className="flex-1 bg-[#1a1a1a] rounded-l-full px-6 py-4 text-white focus:outline-none border border-white/10 border-r-0"
-                  placeholder="Enter 1-100..."
-                />
+                <input autoFocus value={localInput} onChange={e => setLocalInput(e.target.value)} type="number" min="1" max="100"
+                  className="flex-1 bg-[#1a1a1a] rounded-l-full px-6 py-4 text-white focus:outline-none border border-white/10 border-r-0" placeholder="Enter 1-100..." />
                 <button type="submit" className="bg-[#eaff96] text-black px-8 font-bold rounded-r-full">Guess</button>
               </form>
             )}
@@ -623,14 +768,10 @@ export default function GameOverlay({ gameType, roomId, currentUser, targetType,
           <div className="flex flex-col items-center justify-center w-full h-full pb-10">
             <button
               onClick={() => {
-                if (isGreen) {
-                  declareWinner(currentUser.id, `⚡ ${players[currentUser.id]?.name} reacted in ${Date.now() - logic.start}ms!`);
-                } else {
-                  syncState({ ...gameState, logs: [...(gameState.logs || []), `❌ ${players[currentUser.id]?.name || 'Player'} clicked too early!`] });
-                }
+                if (isGreen) declareWinner(currentUser.id, `⚡ ${playersRef.current[currentUser.id]?.name} reacted in ${Date.now() - logic.start}ms!`);
+                else syncState({ ...gameStateRef.current, logs: [...(gameStateRef.current.logs||[]), `❌ ${playersRef.current[currentUser.id]?.name || 'Player'} clicked too early!`] });
               }}
-              className={`w-full max-w-md aspect-square rounded-[3rem] transition-colors duration-300 shadow-2xl active:scale-95 flex items-center justify-center ${isGreen ? 'bg-green-400 shadow-green-400/30' : 'bg-red-500/80'}`}
-            >
+              className={`w-full max-w-md aspect-square rounded-[3rem] transition-colors duration-300 shadow-2xl active:scale-95 flex items-center justify-center ${isGreen ? 'bg-green-400 shadow-green-400/30' : 'bg-red-500/80'}`}>
               <span className="text-white text-3xl font-black uppercase tracking-widest">{isGreen ? 'CLICK NOW!' : 'WAIT...'}</span>
             </button>
           </div>
@@ -643,14 +784,12 @@ export default function GameOverlay({ gameType, roomId, currentUser, targetType,
             <div className="text-2xl font-bold text-white text-center mb-4 bg-[#141414] p-6 rounded-2xl border border-white/5 w-full">{tQ.q}</div>
             <div className="w-full space-y-3">
               {tQ.opts.map((opt: string) => (
-                <button
-                  key={opt}
+                <button key={opt}
                   onClick={() => {
-                    if (opt === tQ.a) declareWinner(currentUser.id, `🏆 ${players[currentUser.id]?.name} got it right!`);
-                    else syncState({ ...gameState, logs: [...(gameState.logs || []), `❌ Wrong! Try again.`] });
+                    if (opt === tQ.a) declareWinner(currentUser.id, `🏆 ${playersRef.current[currentUser.id]?.name} got it right!`);
+                    else syncState({ ...gameStateRef.current, logs: [...(gameStateRef.current.logs||[]), `❌ Wrong! Try again.`] });
                   }}
-                  className="w-full bg-[#141414] border border-white/5 py-4 rounded-2xl hover:bg-[#1a1a1a] hover:border-[#eaff96]/50 text-white font-semibold transition-all"
-                >
+                  className="w-full bg-[#141414] border border-white/5 py-4 rounded-2xl hover:bg-[#1a1a1a] hover:border-[#eaff96]/50 text-white font-semibold transition-all">
                   {opt}
                 </button>
               ))}
@@ -674,14 +813,14 @@ export default function GameOverlay({ gameType, roomId, currentUser, targetType,
             ) : (
               <div className="text-white/40 text-center text-lg">
                 <div className="text-6xl mb-4 animate-bounce">🪙</div>
-                Waiting for {players[logic.p1]?.name} to choose...
+                Waiting for {players[logic.p1]?.name || 'Host'} to choose...
               </div>
             )}
           </div>
         );
       }
       case 'rps': {
-        const myMove = logic.moves[currentUser.id];
+        const myMove = logic.moves?.[currentUser.id];
         return (
           <div className="flex flex-col items-center gap-6">
             {!myMove ? (
@@ -689,7 +828,8 @@ export default function GameOverlay({ gameType, roomId, currentUser, targetType,
                 <div className="text-xl font-black text-white">Pick your move!</div>
                 <div className="flex gap-4">
                   {(['rock', 'paper', 'scissors'] as const).map(m => (
-                    <button key={m} onClick={() => handleRPS(m)} className="flex flex-col items-center gap-2 px-6 py-5 bg-[#141414] border border-white/10 rounded-2xl hover:border-[#eaff96]/50 hover:bg-[#1a1a1a] transition-all">
+                    <button key={m} onClick={() => handleRPS(m)}
+                      className="flex flex-col items-center gap-2 px-6 py-5 bg-[#141414] border border-white/10 rounded-2xl hover:border-[#eaff96]/50 hover:bg-[#1a1a1a] transition-all">
                       <span className="text-4xl">{m === 'rock' ? '✊' : m === 'paper' ? '✋' : '✌️'}</span>
                       <span className="text-xs font-black text-white/60 uppercase tracking-widest">{m}</span>
                     </button>
@@ -702,7 +842,7 @@ export default function GameOverlay({ gameType, roomId, currentUser, targetType,
                 <div className="text-white/60 text-sm">You chose <span className="text-white font-bold capitalize">{myMove}</span>. Waiting for opponent...</div>
               </div>
             )}
-            {Object.keys(logic.moves).length > 0 && (
+            {Object.keys(logic.moves || {}).length > 0 && (
               <div className="w-full text-center text-white/30 text-xs">{Object.keys(logic.moves).length} / 2 players have chosen</div>
             )}
           </div>
@@ -713,6 +853,7 @@ export default function GameOverlay({ gameType, roomId, currentUser, targetType,
     }
   };
 
+  // ── Shell ──────────────────────────────────────────────────────────
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xl flex flex-col animate-in fade-in duration-300">
       {/* Header */}
@@ -744,9 +885,18 @@ export default function GameOverlay({ gameType, roomId, currentUser, targetType,
       {/* Game Area */}
       <div className="flex-1 flex items-center justify-center p-6 bg-[#0a0a0a] bg-[radial-gradient(ellipse_at_center,#1a1a1a,#0a0a0a)]">
         <div className="w-full max-w-2xl relative z-10">
-          {gameState.status === 'waiting' && renderWaiting()}
-          {gameState.status === 'finished' && renderFinished()}
-          {gameState.status === 'playing' && renderPlaying()}
+          {phase === 'connecting' ? (
+            <div className="flex flex-col items-center justify-center text-white/20 animate-pulse">
+              <Clock size={48} className="mb-4" />
+              <div className="text-xs font-black uppercase tracking-[0.3em]">Connecting to Room...</div>
+            </div>
+          ) : (
+            <>
+              {gameState.status === 'waiting'  && renderWaiting()}
+              {gameState.status === 'finished' && renderFinished()}
+              {gameState.status === 'playing'  && renderPlaying()}
+            </>
+          )}
         </div>
       </div>
     </div>

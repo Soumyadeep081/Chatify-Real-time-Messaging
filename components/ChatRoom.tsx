@@ -10,76 +10,13 @@ import SettingsModal from './SettingsModal';
 import StoryViewer from './StoryViewer';
 import ZoomedImageModal from './ZoomedImageModal';
 import InviteMemberModal from './InviteMemberModal';
+import TrendingPreviewCard from './TrendingPreviewCard';
+import GameInviteCard from './GameInviteCard';
+import CallOverlay from './CallOverlay';
+
 
 type TargetType = 'user' | 'group' | null;
 
-function TrendingPreviewCard({ contentId, onGoToTrending, isDark }: { contentId: string, onGoToTrending?: (id?: string) => void, isDark: boolean }) {
-  const [content, setContent] = useState<any>(null);
-  useEffect(() => {
-    insforge.database.from('trending_content').select('*').eq('id', contentId).single().then(({ data }) => {
-      if (data) setContent(data);
-    });
-  }, [contentId]);
-
-  if (!content) return <div className={`p-4 rounded-xl text-foreground/30 text-sm animate-pulse w-72 h-32 ${isDark ? 'bg-white/5' : 'bg-black/5'}`}>Loading trend preview...</div>;
- 
-  return (
-    <div className={`mt-2 border rounded-3xl w-72 shadow-lg overflow-hidden group cursor-pointer hover:-translate-y-1 transition-transform ${isDark ? 'bg-[#141414] border-accent/20' : 'bg-white border-black/5'}`}>
-      <div className="h-32 w-full relative bg-black">
-        {content.media_type === 'video' ? (
-           <video src={content.media_url} className="absolute inset-0 w-full h-full object-cover opacity-80" autoPlay muted loop playsInline />
-        ) : (
-           <img src={content.media_url} className="absolute inset-0 w-full h-full object-cover opacity-80" />
-        )}
-        <div className="absolute top-2 left-2 px-2 py-0.5 bg-[#eaff96] text-black text-[10px] font-black uppercase tracking-widest rounded-sm">
-          {content.category}
-        </div>
-        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/30">
-          <span className="text-white text-xs font-black uppercase tracking-widest bg-[#eaff96] text-black px-3 py-1.5 rounded-full">View in Trending</span>
-        </div>
-      </div>
-      <div className="p-4">
-        <div className={`font-bold text-sm leading-snug mb-1 line-clamp-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>{content.title}</div>
-        <div className={`text-[11px] flex items-center justify-between mt-2 ${isDark ? 'text-white/50' : 'text-gray-400'}`}>
-          <span>{content.source_name}</span>
-          <span className="text-accent">Tap to view →</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function GameInviteCard({ gameType, roomId, launcherName, onJoin, invitedIds, currentUserId, isFinished, isDark }: { gameType: string, roomId: string, launcherName: string, onJoin: () => void, invitedIds?: string[], currentUserId: string, isFinished?: boolean, isDark: boolean }) {
-  const isInvited = !invitedIds || invitedIds.length === 0 || invitedIds.includes(currentUserId);
-  if (!isInvited) return null;
-  return (
-    <div className={`mt-2 border rounded-3xl p-6 w-full max-w-[280px] shadow-xl overflow-hidden relative group ${isDark ? 'bg-[#141414] border-accent/20' : 'bg-white border-black/5'}`}>
-      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#eaff96] to-transparent animate-pulse" />
-      <div className="flex items-center space-x-4 mb-4">
-        <div className="w-12 h-12 rounded-2xl bg-accent text-black flex items-center justify-center shadow-lg shadow-accent/20 rotate-3 group-hover:rotate-0 transition-transform">
-           <Gamepad2 size={24} />
-        </div>
-        <div>
-          <div className={`text-[10px] font-black uppercase tracking-widest mb-0.5 ${isDark ? 'text-accent' : 'text-lime-700'}`}>Game Invite</div>
-          <div className={`text-lg font-black ${isDark ? 'text-white' : 'text-gray-900'}`}>{GAME_TYPES[gameType as keyof typeof GAME_TYPES]?.name || 'New Game'}</div>
-        </div>
-      </div>
-      <p className={`text-xs mb-5 font-medium leading-relaxed ${isDark ? 'text-white/40' : 'text-gray-500'}`}>Challenge from <span className={isDark ? 'text-white font-bold' : 'text-gray-900 font-bold'}>{launcherName}</span>. {isFinished ? 'This game has ended.' : 'Ready to show your skills?'}</p>
-      {isFinished ? (
-        <div className="w-full py-3 bg-white/5 text-white/30 rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 border border-white/10">
-          <Trophy size={12} /> Game Ended
-        </div>
-      ) : (
-        <button 
-          onClick={onJoin}
-          className="w-full py-3 bg-[#eaff96] text-black rounded-xl font-black uppercase tracking-widest text-[10px] hover:scale-105 active:scale-95 transition-all shadow-lg shadow-[#eaff96]/10 flex items-center justify-center gap-2"
-        >
-          Join Game Now <ArrowRight size={14} />
-        </button>
-      )}
-    </div>
-  );
-}
 
 export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileUpdate, isDark, onToggleTheme, onGoToTrending }: {
   session: any;
@@ -119,6 +56,8 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [activeCall, setActiveCall] = useState<{ type: 'video' | 'audio', room: string, title: string, callId?: string } | null>(null);
   const [incomingCall, setIncomingCall] = useState<any>(null);
+  const [callingStatus, setCallingStatus] = useState<'idle' | 'calling' | 'ringing' | 'connected'>('idle');
+  const [callSession, setCallSession] = useState<any>(null);
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
@@ -160,6 +99,10 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
 
   const [sharedLinks, setSharedLinks] = useState<string[]>([]);
   const [broadcasts, setBroadcasts] = useState<any[]>([]);
+  const callSessionRef = useRef<any>(null);
+  useEffect(() => {
+    callSessionRef.current = callSession;
+  }, [callSession]);
 
   // --- Fetching Functions ---
 
@@ -393,6 +336,18 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
         insforge.realtime.on('incoming_group_call', onIncomingGroupCall);
         insforge.realtime.on('broadcast_received', onBroadcastReceived);
         insforge.realtime.on('call_ended', onCallEnded);
+        insforge.realtime.on('call_accepted', (payload: any) => {
+          if (callSessionRef.current && payload.room === callSessionRef.current.room) {
+            setCallingStatus('connected');
+            setActiveCall({ ...callSessionRef.current });
+          }
+        });
+        insforge.realtime.on('call_rejected', (payload: any) => {
+          if (callSessionRef.current && payload.room === callSessionRef.current.room) {
+            setCallingStatus('idle');
+            setCallSession(null);
+          }
+        });
 
         const pingInterval = setInterval(() => {
           if (!mountedRef.current) return;
@@ -462,19 +417,65 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
 
   // Fetch thread
   useEffect(() => {
-    if (!selectedTarget.data) return;
+    if (!selectedTarget.data) {
+      setMessages([]);
+      return;
+    }
+    
+    // Clear messages for the new target to avoid showing old ones
+    setMessages([]);
+    
     const fetchThread = async () => {
-      if (selectedTarget.type === 'user') {
-        const { data } = await insforge.database.from('direct_messages').select('*').or(`and(sender_id.eq.${currentUser.id},receiver_id.eq.${selectedTarget.data.id}),and(sender_id.eq.${selectedTarget.data.id},receiver_id.eq.${currentUser.id})`).order('created_at', { ascending: false }).limit(100);
-        if (data) { setMessages(data.reverse()); scrollToBottom(); }
-      } else if (selectedTarget.type === 'group') {
-        const { data } = await insforge.database.from('chat_group_messages').select('*, profiles(name, username, avatar_url)').eq('group_id', selectedTarget.data.id).order('created_at', { ascending: false }).limit(100);
-        if (data) { setMessages(data.reverse()); scrollToBottom(); }
-        insforge.database.from('chat_group_game_stats').select('user_id, wins').eq('group_id', selectedTarget.data.id).order('wins', { ascending: false }).then(({ data: st }) => setGroupGameStats(st || []));
+      try {
+        if (selectedTarget.type === 'user') {
+          const { data, error } = await insforge.database
+            .from('direct_messages')
+            .select('*, sender:profiles!sender_id(name, username, avatar_url)')
+            .or(`and(sender_id.eq.${currentUser.id},receiver_id.eq.${selectedTarget.data.id}),and(sender_id.eq.${selectedTarget.data.id},receiver_id.eq.${currentUser.id})`)
+            .order('created_at', { ascending: false })
+            .limit(100);
+          
+          if (error) {
+            console.error('Error fetching direct messages:', error);
+            return;
+          }
+          
+          if (data) { 
+            setMessages(data.reverse()); 
+            scrollToBottom(); 
+          }
+        } else if (selectedTarget.type === 'group') {
+          const { data, error } = await insforge.database
+            .from('chat_group_messages')
+            .select('*, sender:profiles!sender_id(name, username, avatar_url)')
+            .eq('group_id', selectedTarget.data.id)
+            .order('created_at', { ascending: false })
+            .limit(100);
+          
+          if (error) {
+            console.error('Error fetching group messages:', error);
+            return;
+          }
+          
+          if (data) { 
+            setMessages(data.reverse()); 
+            scrollToBottom(); 
+          }
+          
+          // Fetch group game stats separately as before
+          insforge.database.from('chat_group_game_stats')
+            .select('user_id, wins')
+            .eq('group_id', selectedTarget.data.id)
+            .order('wins', { ascending: false })
+            .then(({ data: st }) => setGroupGameStats(st || []));
+        }
+      } catch (err) {
+        console.error('Exception in fetchThread:', err);
       }
     };
+    
     fetchThread();
-  }, [selectedTarget, currentUser.id, activeGame]);
+  }, [selectedTarget.data?.id, selectedTarget.type, currentUser.id, activeGame]);
 
   // Extract shared media
   useEffect(() => {
@@ -503,11 +504,18 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
   const handleTrendingShare = async (contentId: string, targetType: 'user' | 'group', targetData: any) => {
     const content = `[TRENDING:${contentId}]`;
     if (targetType === 'user') {
-      const { data } = await insforge.database.from('direct_messages').insert([{ content, sender_id: currentUser.id, receiver_id: targetData.id }]).select('*, profiles(name, username, avatar_url)').single();
-      if (data) insforge.realtime.publish(`chat:${targetData.id}`, 'new_message', data);
+      const targetChannel = `chat:${targetData.id}`;
+      const { data } = await insforge.database.from('direct_messages').insert([{ content, sender_id: currentUser.id, receiver_id: targetData.id }]).select('*, profiles:profiles!sender_id(name, username, avatar_url)').single();
+      if (data) {
+        await insforge.realtime.subscribe(targetChannel);
+        insforge.realtime.publish(targetChannel, 'new_message', data);
+      }
     } else {
-      const { data } = await insforge.database.from('chat_group_messages').insert([{ content, sender_id: currentUser.id, group_id: targetData.id }]).select('*, profiles(name, username, avatar_url)').single();
-      if (data) insforge.realtime.publish(`group_events`, 'new_group_message', data);
+      const { data } = await insforge.database.from('chat_group_messages').insert([{ content, sender_id: currentUser.id, group_id: targetData.id }]).select('*, profiles:profiles!sender_id(name, username, avatar_url)').single();
+      if (data) {
+        await insforge.realtime.subscribe(`group_events`);
+        insforge.realtime.publish(`group_events`, 'new_group_message', data);
+      }
     }
   };
 
@@ -532,10 +540,17 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
 
   const handleCall = async (type: 'audio' | 'video') => {
     if (!selectedTarget.data) return;
+    
+    // Check if we are already in a call
+    if (activeCall || callingStatus !== 'idle') return;
+
     // Use Jitsi-compatible room ID (letters and numbers only)
     const roomId = `chatify_${currentUser.id.replace(/-/g, '').slice(0, 8)}_${Date.now()}`;
     const title = selectedTarget.data.name || selectedTarget.data.username || 'Conversation';
     
+    setCallingStatus('calling');
+    setCallSession({ type, room: roomId, title, target: selectedTarget.data });
+
     // Create call record in DB
     const { data: callRecord } = await insforge.database.from('call_history').insert([{
        caller_id: currentUser.id,
@@ -549,36 +564,64 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
     const callData = {
       type, room: roomId, title,
       caller_name: currentUser.profile?.name || currentUser.name || currentUser.username || 'Someone',
+      caller_avatar: currentUser.profile?.avatar_url,
       caller_id: currentUser.id,
       call_id: callRecord?.id
     };
+
     if (selectedTarget.type === 'user') {
-       insforge.realtime.publish(`chat:${selectedTarget.data.id}`, 'incoming_call', callData);
+       const targetChannel = `chat:${selectedTarget.data.id}`;
+       await insforge.realtime.subscribe(targetChannel);
+       insforge.realtime.publish(targetChannel, 'incoming_call', callData);
     } else {
-       insforge.realtime.publish(`group_events`, 'incoming_group_call', { ...callData, group_id: selectedTarget.data.id });
+       const targetChannel = `group_events`;
+       await insforge.realtime.subscribe(targetChannel); // Already subscribed in setupRealtime, but safe to call again
+       insforge.realtime.publish(targetChannel, 'incoming_group_call', { ...callData, group_id: selectedTarget.data.id });
     }
 
     callStartTimeRef.current = Date.now();
-    setActiveCall({ type, room: roomId, title, callId: callRecord?.id });
+
+    
+    // We stay in 'calling' state until they answer (status_update) or we timeout
+    // In this premium version, answering happens via 'call_accepted' event
+    
+    // Auto-timeout if no answer in 45 seconds
+    setTimeout(() => {
+       setCallingStatus(prev => {
+          if (prev === 'calling' || prev === 'ringing') {
+             handleEndCall();
+             return 'idle';
+          }
+          return prev;
+       });
+    }, 45000);
+
     fetchCallHistory();
   };
 
   const handleEndCall = async () => {
-    if (!activeCall) return;
+    const activeId = activeCall?.callId || callSession?.callId;
+    
     // Update call record with end time
-    if (activeCall.callId) {
+    if (activeId) {
       await insforge.database.from('call_history').update({
         ended_at: new Date().toISOString(),
-        status: 'completed'
-      }).eq('id', activeCall.callId);
+        status: activeCall ? 'completed' : 'missed'
+      }).eq('id', activeId);
     }
+
     // Notify other party that call ended
-    if (selectedTarget.type === 'user') {
-      insforge.realtime.publish(`chat:${selectedTarget.data.id}`, 'call_ended', {});
-    } else if (selectedTarget.type === 'group') {
-      insforge.realtime.publish('group_events', 'call_ended', { group_id: selectedTarget.data.id });
+    const targetId = selectedTarget.data?.id || callSession?.target?.id;
+    if (targetId) {
+       const targetChannel = (selectedTarget.type === 'user' || callSession?.target) ? `chat:${targetId}` : 'group_events';
+       await insforge.realtime.subscribe(targetChannel);
+       insforge.realtime.publish(targetChannel, 'call_ended', { group_id: selectedTarget.type === 'group' ? targetId : undefined });
     }
+
     setActiveCall(null);
+    setCallSession(null);
+    setCallingStatus('idle');
+    setIncomingCall(null);
     fetchCallHistory();
   };
 
@@ -589,20 +632,36 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
     
     const inviteContent = `[GAME_INVITE:${gameType}:${roomId}:${launcherName}${targetUserIds ? `:${targetUserIds.join(',')}` : ''}]`;
     
+    // Pre-create game session in DB so joiners can fetch it as ground truth
+    try {
+      await insforge.database.rpc('upsert_game_session', {
+        p_room_id: roomId,
+        p_game_type: gameType,
+        p_host_id: currentUser.id
+      });
+    } catch (_) { /* non-fatal */ }
+
     if (selectedTarget.type === 'user') {
+       const targetChannel = `chat:${selectedTarget.data.id}`;
        const { data: msg } = await insforge.database.from('direct_messages').insert([{
          content: inviteContent,
          sender_id: currentUser.id,
          receiver_id: selectedTarget.data.id
        }]).select().single();
-       if (msg) insforge.realtime.publish(`chat:${selectedTarget.data.id}`, 'new_message', msg);
+       if (msg) {
+         await insforge.realtime.subscribe(targetChannel);
+         insforge.realtime.publish(targetChannel, 'new_message', msg);
+       }
     } else {
        const { data: msg } = await insforge.database.from('chat_group_messages').insert([{
          content: inviteContent,
          sender_id: currentUser.id,
          group_id: selectedTarget.data.id
        }]).select().single();
-       if (msg) insforge.realtime.publish(`group_events`, 'new_group_message', msg);
+       if (msg) {
+         await insforge.realtime.subscribe(`group_events`);
+         insforge.realtime.publish(`group_events`, 'new_group_message', msg);
+       }
     }
     
     setShowGameCenter(false);
@@ -701,11 +760,18 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
     const content = newMessage.trim();
     setNewMessage('');
     if (selectedTarget.type === 'user') {
-      const { data } = await insforge.database.from('direct_messages').insert([{ content, sender_id: currentUser.id, receiver_id: selectedTarget.data.id }]).select('*, profiles(name, username, avatar_url)').single();
-      if (data) insforge.realtime.publish(`chat:${selectedTarget.data.id}`, 'new_message', data);
+      const targetChannel = `chat:${selectedTarget.data.id}`;
+      const { data } = await insforge.database.from('direct_messages').insert([{ content, sender_id: currentUser.id, receiver_id: selectedTarget.data.id }]).select('*, sender:profiles!sender_id(name, username, avatar_url)').single();
+      if (data) {
+        await insforge.realtime.subscribe(targetChannel);
+        insforge.realtime.publish(targetChannel, 'new_message', data);
+      }
     } else {
-      const { data } = await insforge.database.from('chat_group_messages').insert([{ content, sender_id: currentUser.id, group_id: selectedTarget.data.id }]).select('*, profiles(name, username, avatar_url)').single();
-      if (data) insforge.realtime.publish(`group_events`, 'new_group_message', data);
+      const { data } = await insforge.database.from('chat_group_messages').insert([{ content, sender_id: currentUser.id, group_id: selectedTarget.data.id }]).select('*, sender:profiles!sender_id(name, username, avatar_url)').single();
+      if (data) {
+        await insforge.realtime.subscribe(`group_events`);
+        insforge.realtime.publish(`group_events`, 'new_group_message', data);
+      }
     }
   };
 
@@ -719,13 +785,20 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
       if (data?.url) {
         const msgData: any = { attachment_url: data.url, attachment_type: file.type, sender_id: currentUser.id };
         if (selectedTarget.type === 'user') {
+          const targetChannel = `chat:${selectedTarget.data.id}`;
           msgData.receiver_id = selectedTarget.data.id;
-          const { data: res } = await insforge.database.from('direct_messages').insert([msgData]).select('*, profiles(name, username, avatar_url)').single();
-          if (res) insforge.realtime.publish(`chat:${selectedTarget.data.id}`, 'new_message', res);
+          const { data: res } = await insforge.database.from('direct_messages').insert([msgData]).select('*, sender:profiles!sender_id(name, username, avatar_url)').single();
+          if (res) {
+            await insforge.realtime.subscribe(targetChannel);
+            insforge.realtime.publish(targetChannel, 'new_message', res);
+          }
         } else {
           msgData.group_id = selectedTarget.data.id;
-          const { data: res } = await insforge.database.from('chat_group_messages').insert([msgData]).select('*, profiles(name, username, avatar_url)').single();
-          if (res) insforge.realtime.publish(`group_events`, 'new_group_message', res);
+          const { data: res } = await insforge.database.from('chat_group_messages').insert([msgData]).select('*, sender:profiles!sender_id(name, username, avatar_url)').single();
+          if (res) {
+            await insforge.realtime.subscribe(`group_events`);
+            insforge.realtime.publish(`group_events`, 'new_group_message', res);
+          }
         }
       }
     } catch (err: any) { alert('Upload failed: ' + err.message); } finally { setIsUploadingFile(false); if (fileInputRef.current) fileInputRef.current.value = ''; }
@@ -808,7 +881,7 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
       <div className="flex-1 flex overflow-hidden relative">
         
         {/* List Section (Left) */}
-        <div className={`w-full md:w-[400px] flex flex-col border-r shrink-0 ${isDark ? 'border-white/5 bg-[#111111]/30 backdrop-blur-3xl' : 'border-gray-200 bg-white'} ${selectedTarget.data && !showMobileSidebar ? 'hidden md:flex' : 'flex'}`}>
+        <div className={`w-full md:w-[400px] flex flex-col border-r shrink-0 ${isDark ? 'border-white/5 bg-[#111111]/30 backdrop-blur-3xl' : 'border-gray-200 bg-white'} ${selectedTarget.data ? 'hidden md:flex' : 'flex'}`}>
           
           {/* List Header */}
           <div className={`p-6 pb-2 ${isDark ? '' : 'border-b border-gray-100'}`}>
@@ -1151,6 +1224,29 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
 
             {activeTab === 'trending' && <TrendingFeed onShare={handleTrendingShare} currentUser={currentUser} recentChats={recentChats} groups={groups} />}
           </div>
+
+          {/* Mobile Bottom Navigation */}
+          <div className={`md:hidden shrink-0 h-[70px] border-t flex items-center justify-around px-1 z-50 ${isDark ? 'border-white/10 bg-[#111]' : 'border-gray-200 bg-white'}`}>
+            {[
+              { id: 'chats', icon: <MessageSquare size={20} />, label: 'Chats' },
+              { id: 'groups', icon: <Users size={20} />, label: 'Groups' },
+              { id: 'trending', icon: <Flame size={20} />, label: 'Feeds' },
+              { id: 'calls', icon: <Phone size={20} />, label: 'Calls' },
+            ].map(item => (
+               <button
+                 key={item.id}
+                 onClick={() => setActiveTab(item.id as any)}
+                 className={`flex flex-col flex-1 items-center justify-center h-full space-y-1 ${activeTab === item.id ? 'text-accent' : isDark ? 'text-white/40' : 'text-gray-400'}`}
+               >
+                 {item.icon}
+                 <span className="text-[9px] font-bold uppercase tracking-wider">{item.label}</span>
+               </button>
+            ))}
+            <button onClick={() => setShowSettings(true)} className={`flex flex-col flex-1 items-center justify-center h-full space-y-1 py-1 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+               <Settings size={20} />
+               <span className="text-[9px] font-bold uppercase tracking-wider">Settings</span>
+            </button>
+          </div>
         </div>
 
         {/* Chat Section (Right) */}
@@ -1165,9 +1261,9 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
         ) : (
           <div className={`flex-1 flex flex-col relative shadow-2xl ${isDark ? 'bg-[#0d0d0d]' : 'bg-white'}`}>
               {/* Header */}
-              <div className={`h-20 shrink-0 flex items-center justify-between px-6 border-b z-10 ${isDark ? 'border-white/5 bg-black/40 backdrop-blur-xl' : 'border-gray-200 bg-white/80 backdrop-blur-xl'}`}>
+              <div className={`h-20 shrink-0 flex items-center justify-between px-4 md:px-6 border-b z-10 ${isDark ? 'border-white/5 bg-black/40 backdrop-blur-xl' : 'border-gray-200 bg-white/80 backdrop-blur-xl'}`}>
                  <div className="flex items-center flex-1 min-w-0">
-                    <button onClick={() => setSelectedTarget({ type: null, data: null })} className={`md:hidden mr-4 p-2 rounded-full ${isDark ? 'bg-white/5 text-white/60' : 'bg-gray-100 text-gray-600'}`}><ArrowLeft size={18} /></button>
+                    <button onClick={() => setSelectedTarget({ type: null, data: null })} className={`md:hidden mr-3 p-2.5 rounded-full ${isDark ? 'bg-white/5 text-white' : 'bg-gray-100 text-black'}`}><ArrowLeft size={20} /></button>
                      <div
                         className={`w-10 h-10 rounded-full flex items-center justify-center mr-3 font-semibold border overflow-hidden shrink-0 cursor-zoom-in ${isDark ? 'bg-[#2a2a2a] border-white/5' : 'bg-gray-200 border-gray-300'}`}
                         onClick={() => { if (selectedTarget.data?.avatar_url) setZoomedImage(selectedTarget.data.avatar_url); }}
@@ -1197,28 +1293,32 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
                        <div className="text-sm font-bold uppercase tracking-[0.2em]">Start a secure conversation</div>
                     </div>
                  )}
-                 {messages.map((m: any, idx: number) => {
+                  {messages.map((m: any, idx: number) => {
                     const isMe = m.sender_id === currentUser?.id;
                     const showTime = idx === 0 || new Date(m.created_at).getTime() - new Date(messages[idx-1].created_at).getTime() > 300000;
+                    
+                    // Unified profile lookup for the sender
+                    const senderProfile = m.sender || (selectedTarget.type === 'group' 
+                      ? selectedTarget.data.chat_group_members?.find((mb: any) => mb.user_id === m.sender_id)?.profiles
+                      : (isMe ? (currentUser?.profile || currentUser) : selectedTarget.data));
+
                     return (
                        <div key={m.id} className="space-y-2">
                           {showTime && <div className="text-center py-4"><span className={`text-[10px] font-black uppercase tracking-[0.2em] px-3 py-1 rounded-full ${isDark ? 'text-white/20 bg-white/5' : 'text-gray-400 bg-gray-200'}`}>{formatDatePill(m.created_at)}</span></div>}
                           <div className={`flex ${isMe ? 'justify-end' : 'justify-start'} items-end gap-3 group/msg`}>
                               {!isMe && (
                                 <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 overflow-hidden border ${isDark ? 'bg-[#2a2a2a] border-white/5' : 'bg-gray-100 border-gray-200'}`}>
-                                  {selectedTarget.type === 'group' && m.profiles?.avatar_url ? (
-                                    <img src={m.profiles.avatar_url} className="w-full h-full object-cover" />
-                                  ) : (selectedTarget.type === 'user' && selectedTarget.data?.avatar_url ? (
-                                    <img src={selectedTarget.data.avatar_url} className="w-full h-full object-cover" />
+                                  {senderProfile?.avatar_url ? (
+                                    <img src={senderProfile.avatar_url} className="w-full h-full object-cover" />
                                   ) : (
-                                    <span className="text-[10px] font-bold text-white/40">{(m.profiles?.name || selectedTarget.data?.name || selectedTarget.data?.username || '?')[0].toUpperCase()}</span>
-                                  ))}
+                                    <span className="text-[10px] font-bold text-white/40">{(senderProfile?.name || senderProfile?.username || '?')[0].toUpperCase()}</span>
+                                  )}
                                 </div>
                               )}
                               <div className={`max-w-[80%] lg:max-w-[60%] px-4 py-3 rounded-[1.5rem] shadow-sm relative ${isMe ? 'bg-accent text-black rounded-tr-none' : (isDark ? 'bg-[#1e1e1e] text-white rounded-tl-none border border-white/5' : 'bg-white text-gray-900 rounded-tl-none border border-gray-100')}`}>
                               {/* Group sender name badge */}
                               {selectedTarget.type === 'group' && !isMe && (
-                                <div className={`text-[10px] font-black mb-1 uppercase tracking-wider ${isDark ? 'text-accent' : 'text-accent/80'}`}>{m.profiles?.name || `@${m.profiles?.username}`}</div>
+                                <div className={`text-[10px] font-black mb-1 uppercase tracking-wider ${isDark ? 'text-accent' : 'text-accent/80'}`}>{senderProfile?.name || `@${senderProfile?.username}`}</div>
                               )}
                                 {m.content && (() => {
                                     const trendingMatch = m.content.match(/\[TRENDING:(.+)\]/);
@@ -1229,9 +1329,11 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
                                      );
                                      
                                      const gameMatch = m.content.match(/\[GAME_INVITE:(.+):(.+):(.+)(?::(.+))?\]/);
-                                     // The message sender is the inviter; current user who clicks join is the accepter
-                                     const senderIsInviter = m.sender_id !== currentUser.id;
-                                     if (gameMatch) return <GameInviteCard gameType={gameMatch[1]} roomId={gameMatch[2]} launcherName={gameMatch[3]} invitedIds={gameMatch[4] ? gameMatch[4].split(',') : []} currentUserId={currentUser.id} isFinished={false} onJoin={() => setActiveGame({ type: gameMatch[1], roomId: gameMatch[2], isInviter: !senderIsInviter })} isDark={isDark} />;
+                                     // The person who SENT this message is the host/inviter.
+                                     // If the current user sent it, they are the host (isInviter=true).
+                                     // If they are clicking Join, they are a guest (isInviter=false).
+                                     const currentUserIsHost = m.sender_id === currentUser.id;
+                                     if (gameMatch) return <GameInviteCard gameType={gameMatch[1]} roomId={gameMatch[2]} launcherName={gameMatch[3]} invitedIds={gameMatch[4] ? gameMatch[4].split(',') : []} currentUserId={currentUser.id} isFinished={false} onJoin={() => setActiveGame({ type: gameMatch[1], roomId: gameMatch[2], isInviter: currentUserIsHost })} isDark={isDark} />;
  
                                      // Mention highlighting
                                      const parts = m.content.split(/(@\w+)/g);
@@ -1629,36 +1731,14 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
       )}
 
       {activeCall && (
-        <div className="fixed inset-0 z-[200] bg-black flex flex-col">
-          {/* Jitsi Video Call embed */}
-          {activeCall.type === 'video' ? (
-            <iframe
-              src={`https://meet.jit.si/${activeCall.room}#userInfo.displayName=${encodeURIComponent(currentUser.profile?.name || currentUser.name || 'User')}&config.startWithVideoMuted=false&config.startWithAudioMuted=false&config.prejoinPageEnabled=false`}
-              allow="camera; microphone; fullscreen; display-capture"
-              className="flex-1 w-full border-0"
-              title="Video Call"
-            />
-          ) : (
-            <iframe
-              src={`https://meet.jit.si/${activeCall.room}#userInfo.displayName=${encodeURIComponent(currentUser.profile?.name || currentUser.name || 'User')}&config.startWithVideoMuted=true&config.startWithAudioMuted=false&config.prejoinPageEnabled=false`}
-              allow="camera; microphone; fullscreen; display-capture"
-              className="flex-1 w-full border-0"
-              title="Audio Call"
-            />
-          )}
-          {/* Overlay controls */}
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-3 bg-black/60 backdrop-blur-xl border border-white/10 rounded-full px-4 py-2">
-            <div className="text-xs font-bold text-white/60 uppercase tracking-widest">
-              {activeCall.type === 'video' ? '📹' : '📞'} {activeCall.title}
-            </div>
-            <button
-              onClick={handleEndCall}
-              className="px-4 py-1.5 bg-red-500 text-white rounded-full font-black text-xs uppercase tracking-widest hover:bg-red-600 transition-all shadow-lg"
-            >
-              End
-            </button>
-          </div>
-        </div>
+        <CallOverlay
+          callType={activeCall.type}
+          roomId={activeCall.room}
+          isCaller={callingStatus === 'calling' || currentUser.id === callSession?.caller_id}
+          targetName={activeCall.title}
+          currentUser={currentUser}
+          onEnd={handleEndCall}
+        />
       )}
 
       {activeGame && (
@@ -1673,12 +1753,12 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
         />
       )}
 
-      {incomingCall && (
+       {incomingCall && (
         <div className="fixed top-8 left-1/2 -translate-x-1/2 z-[300] w-full max-w-md bg-[#141414]/95 backdrop-blur-3xl border border-[#eaff96]/30 rounded-[2rem] p-6 shadow-2xl animate-in slide-in-from-top-10 duration-500">
            <div className="flex items-center justify-between">
               <div className="flex items-center space-x-4">
-                 <div className="w-12 h-12 rounded-2xl bg-[#eaff96] text-black flex items-center justify-center animate-bounce shadow-lg shadow-[#eaff96]/20">
-                    {incomingCall.type === 'video' ? <Video size={24} /> : <Phone size={24} />}
+                 <div className="w-14 h-14 rounded-2xl bg-[#eaff96] text-black flex items-center justify-center animate-bounce shadow-lg shadow-[#eaff96]/20 overflow-hidden">
+                    {incomingCall.caller_avatar ? <img src={incomingCall.caller_avatar} className="w-full h-full object-cover" /> : (incomingCall.type === 'video' ? <Video size={24} /> : <Phone size={24} />)}
                  </div>
                  <div>
                     <div className="text-[10px] font-black text-[#eaff96] uppercase tracking-widest mb-0.5">Incoming {incomingCall.type} call</div>
@@ -1688,7 +1768,10 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
               <div className="flex items-center space-x-2">
                  <button
                    onClick={async () => {
-                     // Record as missed
+                     const callerChannel = `chat:${incomingCall.caller_id}`;
+                     // Notify rejection
+                     await insforge.realtime.subscribe(callerChannel);
+                     insforge.realtime.publish(callerChannel, 'call_rejected', { room: incomingCall.room });
                      if (incomingCall.call_id) {
                        await insforge.database.from('call_history').update({ status: 'missed', ended_at: new Date().toISOString() }).eq('id', incomingCall.call_id);
                      }
@@ -1699,7 +1782,10 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
                  ><X size={20} /></button>
                  <button
                    onClick={async () => {
-                     // Mark call as answered
+                     const callerChannel = `chat:${incomingCall.caller_id}`;
+                     // Notify acceptance
+                     await insforge.realtime.subscribe(callerChannel);
+                     insforge.realtime.publish(callerChannel, 'call_accepted', { room: incomingCall.room });
                      if (incomingCall.call_id) {
                        await insforge.database.from('call_history').update({ status: 'completed' }).eq('id', incomingCall.call_id);
                      }
@@ -1707,9 +1793,34 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
                      setActiveCall({ type: incomingCall.type, room: incomingCall.room, title: incomingCall.caller_name || 'Call', callId: incomingCall.call_id });
                      setIncomingCall(null);
                    }}
-                   className="w-10 h-10 rounded-xl bg-[#eaff96] text-black flex items-center justify-center hover:scale-105 transition-all shadow-lg"
+                   className="w-10 h-10 rounded-xl bg-[#eaff96] text-black flex items-center justify-center hover:scale-110 transition-all shadow-lg"
                  ><Phone size={20} /></button>
               </div>
+           </div>
+        </div>
+      )}
+
+      {(callingStatus === 'calling' || callingStatus === 'ringing') && callSession && (
+        <div className="fixed inset-0 z-[400] bg-black/95 backdrop-blur-3xl flex flex-col items-center justify-center text-center p-6">
+           <div className="relative mb-8">
+              <div className="w-32 h-32 rounded-[3rem] bg-[#1a1a1a] border border-white/10 flex items-center justify-center overflow-hidden shadow-2xl">
+                 {callSession.target?.avatar_url ? <img src={callSession.target.avatar_url} className="w-full h-full object-cover" /> : <User size={48} className="text-white/10" />}
+              </div>
+              <div className="absolute inset-0 rounded-[3rem] border-2 border-accent animate-ping opacity-30" />
+              <div className="absolute -bottom-2 -right-2 w-10 h-10 rounded-2xl bg-accent text-black flex items-center justify-center">
+                 {callSession.type === 'video' ? <Video size={18} /> : <Phone size={18} />}
+              </div>
+           </div>
+           <h2 className="text-3xl font-black text-white mb-2">{callSession.target?.name || callSession.target?.username || 'User'}</h2>
+           <p className="text-[#eaff96] font-black uppercase tracking-[0.3em] text-xs animate-pulse">{callingStatus}...</p>
+           
+           <div className="mt-16">
+              <button 
+                onClick={handleEndCall}
+                className="w-16 h-16 rounded-3xl bg-red-500 text-white flex items-center justify-center hover:scale-110 active:scale-95 transition-all shadow-2xl shadow-red-500/20"
+              >
+                <X size={32} />
+              </button>
            </div>
         </div>
       )}
