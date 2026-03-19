@@ -62,9 +62,18 @@ export default function Home() {
           }
         });
         setView('chat');
-      } catch {
-        setSession(authSession);
-        setView('chat');
+      } catch (err: any) {
+        // If the token is rejected (e.g. Invalid token / expired), clear it and force login
+        if (err?.message?.includes('Invalid token') || err?.statusCode === 401 || err?.statusCode === 403) {
+           localStorage.removeItem('insforge_oauth_backup');
+           (insforge.auth as any).tokenManager?.clearSession?.();
+           setSession(null);
+           setView('landing');
+        } else {
+           // Network error but token might be valid
+           setSession(authSession);
+           setView('chat');
+        }
       }
       setLoading(false);
     };

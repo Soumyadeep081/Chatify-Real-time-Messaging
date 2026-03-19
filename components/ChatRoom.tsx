@@ -379,8 +379,13 @@ export default function ChatRoom({ session, onSignOut, onGoToLanding, onProfileU
           insforge.realtime.unsubscribe('presence:global');
           insforge.realtime.unsubscribe('broadcasts:global');
         };
-      } catch (err) {
-        console.error('Realtime setup error:', err);
+      } catch (err: any) {
+        if (err?.message === 'Invalid token') {
+            // Silently ignore expired invalid tokens so it doesn't crash the UI
+            // The layout is already handling empty states gracefully
+        } else {
+            console.warn('Realtime setup error:', err.message);
+        }
       }
     };
 
